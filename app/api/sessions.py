@@ -394,7 +394,8 @@ def get_dify_agents(session_id: str, db: Session = Depends(get_db)):
                 "name": agent.name,
                 "description": agent.description,
                 "flow_names": list(agent.flow_names),
-                "configured": bool(agent.api_url and agent.api_key),
+                "configured": True,
+                "mode": "prompt",
             }
             for agent in agents
         ],

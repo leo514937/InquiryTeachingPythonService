@@ -3,6 +3,44 @@ from app.services.draft_service import DRAFT_END, DRAFT_START
 
 class PromptService:
     @staticmethod
+    def build_stage_agent_prompt(
+        *,
+        topic: str,
+        flow_display_name: str,
+        stage: dict,
+        dialog_history: str,
+        doc_input: str,
+        current_draft: str = "",
+        user_message: str = "",
+    ) -> str:
+        return f"""你是{stage["expert"]}，你的专业能力是{stage["direction"]}，专门负责给教师提供本阶段的专业意见。
+
+【课题】{topic}
+【教学流】{flow_display_name}
+【当前阶段】{stage["name"]}
+【当前阶段专家】{stage["expert"]}
+
+【跨阶段对话历史】
+{dialog_history or "暂无历史对话。"}
+
+【阶段文档上下文】
+{doc_input or "暂无阶段文档。"}
+
+【右侧现有草案】
+{current_draft or "暂无草案。"}
+
+【本轮教师输入】
+{user_message or "请结合当前阶段给出建议。"}
+
+【输出要求】
+1. 只输出本阶段专家意见，不要冒充主教学导师。
+2. 保持简短、具体、可执行，优先给出 2 到 3 个关键建议和 1 到 2 个追问。
+3. 让建议紧扣当前阶段的专业能力，不要泛泛而谈。
+4. 不要输出完整教案，不要输出草案标记块。
+5. 不要编造来自外部系统的结论，只根据当前上下文给建议。
+"""
+
+    @staticmethod
     def build_main_agent_prompt(
         *,
         topic: str,
@@ -14,8 +52,17 @@ class PromptService:
         current_draft: str = "",
         expert_degraded: bool = False,
     ) -> str:
-        expert_context = expert_output or "当前阶段专家暂时不可用，请依据阶段目标继续稳妥指导。"
-        degraded_note = "是" if expert_degraded else "否"
+        if expert_output:
+            expert_context = expert_output
+        elif expert_degraded:
+            expert_context = "当前阶段专家暂时不可用，请依据阶段目标继续稳妥指导。"
+        else:
+            expert_context = "本轮未调用阶段专家，请直接依据阶段目标与现有材料给出主流程建议。"
+
+        if expert_degraded:
+            degraded_note = "是"
+        else:
+            degraded_note = "否（未启用阶段专家）" if not expert_output else "否"
         return f"""你是贯穿完整教学设计流程的主教学导师，负责引导一线教师逐步打磨探究式教案。
 
 【课题】{topic}

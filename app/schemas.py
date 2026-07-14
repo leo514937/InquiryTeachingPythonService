@@ -13,6 +13,10 @@ class SelectFlowRequest(BaseModel):
     clear_messages: bool = True
 
 
+class ChatModeRequest(BaseModel):
+    chat_mode: Literal["main", "subagent"]
+
+
 class ChatRequest(BaseModel):
     type: Literal["chat", "sys_action"] = "chat"
     message: str = ""

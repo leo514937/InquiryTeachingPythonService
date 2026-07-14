@@ -46,7 +46,6 @@
           </div>
           <div class="progress-current-info" v-if="currentStage">
             <strong>当前角色：{{ currentStage.expert }}</strong>
-            <p class="muted">{{ currentStage.direction }}</p>
           </div>
         </div>
       </section>
@@ -56,9 +55,16 @@
         <div class="panel-head">
           <h2>主对话</h2>
           <div class="toolbar">
-            <span class="stage-agent-pill" v-if="currentStage">
-              {{ currentStage.expert }}
-            </span>
+            <button
+              class="stage-agent-pill mode-toggle"
+              :class="{ active: chatMode === 'subagent' }"
+              v-if="currentStage"
+              @click="toggleChatMode"
+              :disabled="isStreaming"
+              :title="chatMode === 'subagent' ? '当前为子Agent模式，点击切回主流程' : '当前为主流程模式，点击切到子Agent'"
+            >
+              {{ chatMode === 'subagent' ? '子Agent对话' : '主流程对话' }}
+            </button>
             <button class="ghost-button compact" @click="rollbackRecent" :disabled="!currentSession" title="撤销最近一轮对话">
               ↺ 回滚
             </button>
@@ -81,7 +87,7 @@
               <small>{{ stageNameMap[message.stage_id] || message.stage_id }}</small>
               <small v-if="message.agent_id">{{ message.agent_id }}</small>
             </div>
-            <div class="message-content">{{ message.content }}</div>
+            <div class="message-content markdown-content" v-html="renderMarkdown(message.content)"></div>
           </article>
 
           <div v-if="!messages.length" class="empty-state">
@@ -165,9 +171,10 @@
           <div class="doc-meta">
             智能体: {{ stage.expert }}
           </div>
-          <div class="doc-preview">
-            {{ activeStageOutput(stage.id)?.draft_content || activeStageOutput(stage.id)?.final_content || '暂无内容，等待对话生成...' }}
-          </div>
+          <div
+            class="doc-preview markdown-preview"
+            v-html="renderMarkdown(activeStageOutput(stage.id)?.draft_content || activeStageOutput(stage.id)?.final_content || '暂无内容，等待对话生成...')"
+          ></div>
         </div>
       </div>
       <div v-else class="empty-state">
@@ -202,15 +209,16 @@
         <div class="stage-card">
           <strong>{{ stageNameMap[selectedStageId] || selectedStageId }}</strong>
           <span class="muted">负责专家：{{ activeStages.find(s => s.id === selectedStageId)?.expert || '主导师' }}</span>
-          <p>{{ activeStages.find(s => s.id === selectedStageId)?.direction || '' }}</p>
         </div>
-        <div class="document-editor">
-          <textarea
-            v-model="draftContent"
-            class="document-textarea"
-            placeholder="这里会接收 SSE 推送的草稿，也可以手动编辑后保存。"
-          ></textarea>
-        </div>
+        <div
+          ref="draftEditorRef"
+          class="document-preview markdown-preview editable"
+          contenteditable="true"
+          spellcheck="false"
+          data-placeholder="这里可以直接编辑 Markdown 草稿"
+          @input="onDraftEditorInput"
+          @blur="syncDraftEditor"
+        ></div>
       </div>
       <div v-else class="empty-state">
         请从中间列表选择一个阶段文档进行查看或编辑。
@@ -243,10 +251,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import {
   createSession,
   deleteSession,
+  getChatMode,
   exportSession,
   getFlows,
   getMessages,
@@ -255,9 +264,11 @@ import {
   rollbackSession,
   saveDraft,
   selectFlow,
+  setChatMode,
   streamChat,
 } from "@/api";
-import type { FlowInfo, FlowStage, MessageItem, SessionDetail, SessionListItem } from "@/types";
+import type { ChatMode, FlowInfo, FlowStage, MessageItem, SessionDetail, SessionListItem } from "@/types";
+import { htmlToMarkdown, renderMarkdown } from "@/utils/markdown";
 
 const flows = ref<FlowInfo[]>([]);
 const sessions = ref<SessionListItem[]>([]);
@@ -272,7 +283,9 @@ const draftContent = ref("");
 const statusText = ref("准备就绪");
 const streamWarning = ref("");
 const isStreaming = ref(false);
+const chatMode = ref<ChatMode>("main");
 const feedRef = ref<HTMLElement | null>(null);
+const draftEditorRef = ref<HTMLElement | null>(null);
 
 // New ref for modal
 const showNewSessionModal = ref(false);
@@ -332,11 +345,32 @@ function syncDraftFromSelection() {
   draftContent.value = output?.draft_content || output?.final_content || "";
 }
 
+function syncDraftEditor() {
+  const editor = draftEditorRef.value;
+  if (!editor) {
+    return;
+  }
+  editor.innerHTML = draftContent.value ? renderMarkdown(draftContent.value) : "";
+}
+
+function onDraftEditorInput() {
+  const editor = draftEditorRef.value;
+  if (!editor) {
+    return;
+  }
+  draftContent.value = htmlToMarkdown(editor.innerHTML);
+}
+
 async function refreshWorkspace() {
   statusText.value = "刷新流程与会话中...";
   const [flowList, sessionList] = await Promise.all([getFlows(), getSessions()]);
   flows.value = flowList;
   sessions.value = sessionList;
+  try {
+    chatMode.value = await getChatMode();
+  } catch {
+    chatMode.value = "main";
+  }
   if (!selectedFlowName.value && flowList[0]) {
     selectedFlowName.value = flowList[0].name;
   }
@@ -356,11 +390,27 @@ async function loadSession(sessionId: string, loadMessages = true, preserveWarni
     messages.value = await getMessages(sessionId);
   }
   syncDraftFromSelection();
+  await nextTick();
+  syncDraftEditor();
   statusText.value = `已切换到 ${session.topic}`;
 }
 
 async function selectSession(sessionId: string) {
   await loadSession(sessionId, true);
+}
+
+async function toggleChatMode() {
+  if (isStreaming.value) {
+    return;
+  }
+  const nextMode: ChatMode = chatMode.value === "main" ? "subagent" : "main";
+  try {
+    const savedMode = await setChatMode(nextMode);
+    chatMode.value = savedMode;
+    statusText.value = savedMode === "subagent" ? "已切换到子Agent模式" : "已切换到主流程模式";
+  } catch (err: any) {
+    statusText.value = `切换失败：${err.message || err}`;
+  }
 }
 
 async function handleDeleteSession() {
@@ -425,6 +475,7 @@ function inspectStage(stageId: string) {
   selectedStageId.value = stageId;
   const output = activeStageOutput(stageId);
   draftContent.value = output?.draft_content || output?.final_content || "";
+  void nextTick(() => syncDraftEditor());
   statusText.value = `正在查看 ${stageNameMap.value[stageId] || stageId}`;
 }
 
@@ -480,7 +531,8 @@ async function sendChat() {
   chatInput.value = "";
   isStreaming.value = true;
   streamWarning.value = "";
-  statusText.value = "正在等待阶段专家分析...";
+  const requestMode = chatMode.value;
+  statusText.value = requestMode === "subagent" ? "正在等待子Agent分析..." : "正在等待主流程分析...";
   const streamMessages = new Map<string, MessageItem>();
 
   try {
@@ -495,7 +547,11 @@ async function sendChat() {
           selectedStageId.value = currentSession.value?.current_stage?.id || selectedStageId.value;
         },
         agent: (data) => {
-          statusText.value = `${data.agent_name || data.agent_id || "导师"} 正在回答`;
+          if (requestMode === "subagent") {
+            statusText.value = `${data.agent_name || data.agent_id || "子Agent"} 正在回答`;
+          } else {
+            statusText.value = `${data.agent_name || data.agent_id || "主流程"} 正在回答`;
+          }
         },
         delta: (data) => {
           const messageType = data.message_type || "main_tutor";
@@ -527,7 +583,11 @@ async function sendChat() {
         },
         done: async (data) => {
           await loadSession(sessionId, true, true);
-          statusText.value = data.degraded ? "主导师已在降级模式下完成回复" : "专家与主导师回复完成";
+          if (requestMode === "subagent") {
+            statusText.value = "子Agent回复完成";
+          } else {
+            statusText.value = data.degraded ? "主导师已在降级模式下完成回复" : "主流程回复完成";
+          }
         },
       },
     );
@@ -623,6 +683,17 @@ watch(
 );
 
 watch(
+  () => draftContent.value,
+  () => {
+    const editor = draftEditorRef.value;
+    if (!editor || document.activeElement === editor) {
+      return;
+    }
+    syncDraftEditor();
+  },
+);
+
+watch(
   () => currentSession.value?.current_stage?.id,
   (value) => {
     if (value) {
@@ -637,5 +708,6 @@ onMounted(async () => {
   if (sessions.value[0]) {
     await loadSession(sessions.value[0].id, true);
   }
+  syncDraftEditor();
 });
 </script>

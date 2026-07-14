@@ -16,6 +16,14 @@ class SessionModel(Base):
     updated_at = Column(String, nullable=False)
 
 
+class AppSettingModel(Base):
+    __tablename__ = "app_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=False, default="")
+    updated_at = Column(String, nullable=False)
+
+
 class MessageModel(Base):
     __tablename__ = "messages"
 

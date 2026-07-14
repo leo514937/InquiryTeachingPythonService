@@ -1,5 +1,6 @@
 import type {
   DifyAgentItem,
+  ChatMode,
   FlowInfo,
   MessageItem,
   SessionDetail,
@@ -70,6 +71,20 @@ export async function selectFlow(sessionId: string, flowName: string): Promise<S
 export async function getDifyAgents(sessionId: string): Promise<DifyAgentItem[]> {
   const payload = await readJson<ApiEnvelope<DifyAgentItem[]>>(`${API_BASE}/api/sessions/${sessionId}/dify_agents`);
   return payload.data || [];
+}
+
+export async function getChatMode(): Promise<ChatMode> {
+  const payload = await readJson<ApiEnvelope<{ chat_mode: ChatMode }>>(`${API_BASE}/api/settings/chat-mode`);
+  return payload.data?.chat_mode || "main";
+}
+
+export async function setChatMode(chatMode: ChatMode): Promise<ChatMode> {
+  const payload = await readJson<ApiEnvelope<{ chat_mode: ChatMode }>>(`${API_BASE}/api/settings/chat-mode`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_mode: chatMode }),
+  });
+  return payload.data?.chat_mode || "main";
 }
 
 export async function saveDraft(sessionId: string, stageId: string, draftContent: string): Promise<void> {

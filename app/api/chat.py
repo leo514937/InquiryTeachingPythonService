@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.core.sse import format_sse
 from app.db.database import SessionLocal, get_db
 from app.db.models import (
@@ -17,6 +16,7 @@ from app.db.models import (
 )
 from app.schemas import ChatRequest
 from app.services.context_service import ContextService
+from app.services.app_settings_service import SUBAGENT_MODE, get_global_chat_mode
 from app.services.dify_agent_service import DifyAgentError, DifyAgentService
 from app.services.draft_service import DraftService
 from app.services.llm_service import LLMService
@@ -110,17 +110,17 @@ def save_chat_result(
     session_id: str,
     stage_id: str,
     user_message: str,
-    expert_message: str,
+    expert_message: str = "",
     expert_agent_id: str,
-    main_message: str,
-    draft_content: str,
+    main_message: str = "",
+    draft_content: str = "",
 ) -> dict:
     db = SessionLocal()
     try:
         turn_id = new_id("turn")
         user_msg_id = new_id("msg")
         expert_msg_id = None
-        main_msg_id = new_id("msg")
+        main_msg_id = None
 
         db.add(
             MessageModel(
@@ -134,6 +134,7 @@ def save_chat_result(
                 created_at=now_iso(),
             )
         )
+
         if expert_message:
             expert_msg_id = new_id("msg")
             db.add(
@@ -149,19 +150,27 @@ def save_chat_result(
                 )
             )
 
+        assistant_message_id = expert_msg_id
+        assistant_message_type = "stage_expert"
+        assistant_message_agent_id = expert_agent_id
         main_timestamp = now_iso()
-        db.add(
-            MessageModel(
-                id=main_msg_id,
-                session_id=session_id,
-                stage_id=stage_id,
-                role="assistant",
-                content=DraftService.strip_draft_markers(main_message),
-                agent_id="main_agent",
-                message_type="main_tutor",
-                created_at=main_timestamp,
+        if main_message:
+            main_msg_id = new_id("msg")
+            assistant_message_id = main_msg_id
+            assistant_message_type = "main_tutor"
+            assistant_message_agent_id = "main_agent"
+            db.add(
+                MessageModel(
+                    id=main_msg_id,
+                    session_id=session_id,
+                    stage_id=stage_id,
+                    role="assistant",
+                    content=DraftService.strip_draft_markers(main_message),
+                    agent_id="main_agent",
+                    message_type="main_tutor",
+                    created_at=main_timestamp,
+                )
             )
-        )
 
         output = (
             db.query(StageOutputModel)
@@ -173,7 +182,7 @@ def save_chat_result(
         )
         draft_before = output.draft_content or "" if output else ""
         draft_after = draft_content or draft_before
-        if output and draft_content:
+        if output and draft_content and main_message:
             output.draft_content = draft_content
             output.updated_at = main_timestamp
 
@@ -184,7 +193,7 @@ def save_chat_result(
                 stage_id=stage_id,
                 user_message_id=user_msg_id,
                 expert_message_id=expert_msg_id,
-                assistant_message_id=main_msg_id,
+                assistant_message_id=assistant_message_id or expert_msg_id or main_msg_id or user_msg_id,
                 rag_record_id=None,
                 draft_before=draft_before,
                 draft_after=draft_after,
@@ -201,6 +210,9 @@ def save_chat_result(
             "user_message_id": user_msg_id,
             "expert_message_id": expert_msg_id,
             "main_message_id": main_msg_id,
+            "assistant_message_id": assistant_message_id or expert_msg_id or main_msg_id,
+            "assistant_message_type": assistant_message_type,
+            "assistant_message_agent_id": assistant_message_agent_id,
         }
     finally:
         db.close()
@@ -300,6 +312,7 @@ async def chat(session_id: str, payload: ChatRequest, db: Session = Depends(get_
     stage_agent_id = stage["agent_id"]
     stage_agent = DifyAgentService.find_agent(stage_agent_id, sess.flow_name)
     conversation_id = get_agent_conversation_id(db, session_id, stage_agent_id)
+    chat_mode = get_global_chat_mode(db)
 
     session_snapshot = {
         "session_id": sess.id,
@@ -318,8 +331,6 @@ async def chat(session_id: str, payload: ChatRequest, db: Session = Depends(get_
         main_text = ""
         last_draft = ""
         next_conversation_id = conversation_id
-        degraded = False
-        warning_message = ""
 
         yield format_sse(
             "stage",
@@ -327,26 +338,27 @@ async def chat(session_id: str, payload: ChatRequest, db: Session = Depends(get_
                 "stage": session_snapshot["stage"],
                 "flow_name": session_snapshot["flow_name"],
                 "flow_display_name": session_snapshot["flow_display_name"],
+                "chat_mode": chat_mode,
             },
         )
-        yield format_sse(
-            "agent",
-            {
-                "mode": get_settings().dify_stage_agent_mode,
-                "agent_id": stage_agent_id,
-                "agent_name": stage["expert"],
-                "message_type": "stage_expert",
-            },
-        )
+        if chat_mode == SUBAGENT_MODE:
+            yield format_sse(
+                "agent",
+                {
+                    "mode": "subagent",
+                    "agent_id": stage_agent_id,
+                    "agent_name": stage["expert"],
+                    "message_type": "stage_expert",
+                },
+            )
 
-        try:
             if not stage_agent:
                 raise DifyAgentError(f"当前流程未配置阶段专家 {stage_agent_id}")
             async for item in DifyAgentService.chat_stream(
                 agent=stage_agent,
                 session_id=session_id,
                 conversation_id=conversation_id,
-                flow_name=session_snapshot["flow_name"],
+                flow_display_name=session_snapshot["flow_display_name"],
                 topic=session_snapshot["topic"],
                 stage=session_snapshot["stage"],
                 message=payload.message,
@@ -369,65 +381,52 @@ async def chat(session_id: str, payload: ChatRequest, db: Session = Depends(get_
                     },
                 )
             upsert_agent_conversation_id(session_id, stage_agent.id, next_conversation_id)
-        except DifyAgentError as exc:
-            degraded = True
-            warning_message = str(exc)
+        else:
             yield format_sse(
-                "warning",
+                "agent",
                 {
-                    "code": "stage_agent_unavailable",
-                    "message": warning_message,
-                    "agent_id": stage_agent_id,
-                    "agent_name": stage["expert"],
-                    "message_type": "stage_expert",
-                },
-            )
-
-        yield format_sse(
-            "agent",
-            {
-                "mode": "main",
-                "agent_id": "main_agent",
-                "agent_name": "主教学导师",
-                "message_type": "main_tutor",
-            },
-        )
-        system_prompt = PromptService.build_main_agent_prompt(
-            topic=session_snapshot["topic"],
-            flow_display_name=session_snapshot["flow_display_name"],
-            stage=session_snapshot["stage"],
-            expert_output=expert_text,
-            dialog_history=session_snapshot["dialog_history"],
-            doc_input=session_snapshot["doc_input"],
-            current_draft=session_snapshot["current_draft"],
-            expert_degraded=degraded,
-        )
-        async for text in LLMService.chat_stream(
-            system_prompt,
-            session_snapshot["llm_history"],
-            payload.message,
-        ):
-            main_text += text
-            yield format_sse(
-                "delta",
-                {
-                    "text": text,
+                    "mode": "main",
                     "agent_id": "main_agent",
                     "agent_name": "主教学导师",
                     "message_type": "main_tutor",
                 },
             )
-            draft = DraftService.extract_draft(main_text)
-            if draft and draft != last_draft:
-                last_draft = draft
+            system_prompt = PromptService.build_main_agent_prompt(
+                topic=session_snapshot["topic"],
+                flow_display_name=session_snapshot["flow_display_name"],
+                stage=session_snapshot["stage"],
+                expert_output="",
+                dialog_history=session_snapshot["dialog_history"],
+                doc_input=session_snapshot["doc_input"],
+                current_draft=session_snapshot["current_draft"],
+                expert_degraded=False,
+            )
+            async for text in LLMService.chat_stream(
+                system_prompt,
+                session_snapshot["llm_history"],
+                payload.message,
+            ):
+                main_text += text
                 yield format_sse(
-                    "draft",
+                    "delta",
                     {
-                        "content": draft,
+                        "text": text,
                         "agent_id": "main_agent",
+                        "agent_name": "主教学导师",
                         "message_type": "main_tutor",
                     },
                 )
+                draft = DraftService.extract_draft(main_text)
+                if draft and draft != last_draft:
+                    last_draft = draft
+                    yield format_sse(
+                        "draft",
+                        {
+                            "content": draft,
+                            "agent_id": "main_agent",
+                            "message_type": "main_tutor",
+                        },
+                    )
 
         final_draft = DraftService.extract_draft(main_text)
         message_ids = save_chat_result(
@@ -443,12 +442,13 @@ async def chat(session_id: str, payload: ChatRequest, db: Session = Depends(get_
             "done",
             {
                 **message_ids,
-                "message_id": message_ids["main_message_id"],
+                "message_id": message_ids["assistant_message_id"],
                 "draft_updated": bool(final_draft),
                 "conversation_id": next_conversation_id if expert_text else None,
-                "degraded": degraded,
-                "failed_agent_id": stage_agent_id if degraded else None,
-                "warning": warning_message or None,
+                "degraded": False,
+                "failed_agent_id": None,
+                "warning": None,
+                "chat_mode": chat_mode,
             },
         )
 

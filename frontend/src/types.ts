@@ -6,6 +6,8 @@ export type FlowStage = {
   direction: string;
 };
 
+export type ChatMode = "main" | "subagent";
+
 export type FlowInfo = {
   name: string;
   display_name: string;
