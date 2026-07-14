@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI 探究式教学助手项目介绍</title>
+  <style>
+    :root {
+      --paper: #f7f5ef;
+      --ink: #102a43;
+      --body: #21333a;
+      --muted: #68787d;
+      --green: #2e6f5e;
+      --gold: #c49a3a;
+      --blue-soft: #e7eef4;
+      --green-soft: #e7f0ec;
+      --gold-soft: #f3ead4;
+      --line: #d6ddda;
+      --white: #ffffff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--body);
+      background:
+        linear-gradient(90deg, rgba(46, 111, 94, .08) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(16, 42, 67, .05) 1px, transparent 1px),
+        var(--paper);
+      background-size: 44px 44px;
+      font-family: "Microsoft YaHei", "Noto Sans SC", sans-serif;
+      line-height: 1.65;
+      overflow-x: hidden;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 42px 28px 54px;
+      width: 100%;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr);
+      gap: 42px;
+      align-items: center;
+      min-height: 430px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .hero > * {
+      min-width: 0;
+    }
+
+    .eyebrow {
+      margin: 0 0 18px;
+      color: var(--green);
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      margin: 0;
+      color: var(--ink);
+      font-size: 54px;
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 720px;
+      margin: 24px 0 0;
+      color: var(--body);
+      font-size: 20px;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 30px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 6px 14px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, .62);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .hero-visual {
+      position: relative;
+      min-width: 0;
+      min-height: 320px;
+      padding: 24px;
+      background: rgba(255, 255, 255, .58);
+      border: 1px solid var(--line);
+    }
+
+    .stage-spine {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 14px;
+      position: relative;
+    }
+
+    .stage-spine::before {
+      content: "";
+      position: absolute;
+      left: 21px;
+      top: 18px;
+      bottom: 18px;
+      width: 2px;
+      background: var(--line);
+    }
+
+    .stage-number {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: var(--paper);
+      border: 2px solid var(--green);
+      color: var(--green);
+      font-family: SimSun, serif;
+      font-weight: 700;
+    }
+
+    .stage:nth-child(1) .stage-number,
+    .stage:nth-child(4) .stage-number {
+      border-color: var(--gold);
+      color: var(--gold);
+    }
+
+    .stage {
+      display: contents;
+    }
+
+    .stage-text {
+      min-width: 0;
+      padding: 5px 0 18px;
+    }
+
+    .stage-title {
+      color: var(--ink);
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .stage-role {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    section {
+      padding: 48px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section-title {
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+      margin-bottom: 26px;
+    }
+
+    .section-title span {
+      color: var(--gold);
+      font-family: SimSun, serif;
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    h2 {
+      margin: 0;
+      color: var(--ink);
+      font-size: 30px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .idea-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .idea {
+      min-height: 168px;
+      padding: 22px;
+      border-left: 4px solid var(--green);
+      background: rgba(255, 255, 255, .66);
+    }
+
+    .idea:nth-child(2) {
+      border-left-color: var(--gold);
+      background: var(--gold-soft);
+    }
+
+    .idea:nth-child(3) {
+      background: var(--green-soft);
+    }
+
+    .idea:nth-child(4) {
+      background: var(--blue-soft);
+      border-left-color: var(--ink);
+    }
+
+    .idea strong {
+      display: block;
+      margin-bottom: 10px;
+      color: var(--ink);
+      font-size: 18px;
+    }
+
+    .idea p {
+      margin: 0;
+      color: var(--body);
+      font-size: 14px;
+    }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: 1fr 92px 1.2fr 92px 1.15fr;
+      align-items: center;
+      gap: 0;
+      margin-top: 8px;
+    }
+
+    .module {
+      min-height: 178px;
+      padding: 24px;
+      background: rgba(255, 255, 255, .7);
+      border: 2px solid var(--ink);
+    }
+
+    .module.core {
+      border-color: var(--green);
+      min-height: 238px;
+    }
+
+    .module.agent {
+      border-color: var(--gold);
+      background: var(--gold-soft);
+    }
+
+    .module h3 {
+      margin: 0 0 14px;
+      color: var(--ink);
+      font-size: 22px;
+    }
+
+    .module p {
+      margin: 0;
+      color: var(--body);
+      font-size: 15px;
+    }
+
+    .arrow {
+      height: 2px;
+      background: var(--green);
+      position: relative;
+    }
+
+    .arrow::after {
+      content: "";
+      position: absolute;
+      right: -1px;
+      top: -6px;
+      width: 12px;
+      height: 12px;
+      border-top: 2px solid var(--green);
+      border-right: 2px solid var(--green);
+      transform: rotate(45deg);
+    }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 0;
+      margin-top: 12px;
+      border-top: 3px solid var(--line);
+    }
+
+    .phase {
+      min-height: 136px;
+      padding: 22px 14px 0;
+      border-right: 1px solid var(--line);
+    }
+
+    .phase:last-child {
+      border-right: 0;
+    }
+
+    .phase b {
+      display: block;
+      color: var(--green);
+      font-family: SimSun, serif;
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    .phase strong {
+      display: block;
+      color: var(--ink);
+      font-size: 16px;
+      margin-bottom: 6px;
+    }
+
+    .phase small {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .status-band {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .status {
+      padding: 24px;
+      min-height: 150px;
+      background: var(--white);
+      border: 1px solid var(--line);
+    }
+
+    .status.done {
+      background: var(--green-soft);
+    }
+
+    .status.next {
+      background: var(--blue-soft);
+    }
+
+    .status h3 {
+      margin: 0 0 12px;
+      color: var(--ink);
+      font-size: 20px;
+    }
+
+    .status p {
+      margin: 0;
+      font-size: 15px;
+    }
+
+    footer {
+      padding-top: 28px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      min-height: 40px;
+      padding: 9px 16px;
+      background: var(--ink);
+      color: var(--white);
+      font-size: 14px;
+      font-weight: 800;
+      max-width: 100%;
+      text-align: center;
+    }
+
+    .button.secondary {
+      background: var(--green);
+    }
+
+    @media (max-width: 880px) {
+      .page {
+        padding: 28px 18px 42px;
+      }
+
+      .hero,
+      .architecture,
+      .idea-grid,
+      .status-band {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 34px;
+      }
+
+      .lead {
+        font-size: 17px;
+        line-height: 1.8;
+      }
+
+      .hero-visual {
+        padding: 18px;
+      }
+
+      .arrow {
+        width: 2px;
+        height: 54px;
+        justify-self: center;
+      }
+
+      .arrow::after {
+        right: -5px;
+        top: auto;
+        bottom: 0;
+        transform: rotate(135deg);
+      }
+
+      .timeline {
+        grid-template-columns: 1fr;
+        border-top: 0;
+      }
+
+      .phase {
+        border-right: 0;
+        border-left: 3px solid var(--line);
+        min-height: auto;
+        padding: 18px 0 18px 18px;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .page {
+        max-width: 390px;
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 32px;
+      }
+
+      .meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .pill {
+        justify-content: center;
+        padding: 6px 8px;
+        text-align: center;
+      }
+
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+
+      .button {
+        justify-content: center;
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">InquiryTeachingPythonService · 新建独立项目</p>
+        <h1>AI 探究式教学助手</h1>
+        <p class="lead">项目的核心设计，是把“生成一份教案”改成“沿着七个探究阶段逐步打磨教案”。教师保留判断权，模型提供阶段专家意见，系统负责流程、草稿和回滚。</p>
+        <div class="meta">
+          <span class="pill">FastAPI + SQLite</span>
+          <span class="pill">Vue 3 工作台</span>
+          <span class="pill">SSE 流式对话</span>
+          <span class="pill">七阶段 Agent</span>
+        </div>
+        <div class="actions">
+          <a class="button" href="http://localhost:5173/">打开工作台</a>
+          <a class="button secondary" href="http://localhost:8010/health">查看后端健康检查</a>
+        </div>
+      </div>
+
+      <aside class="hero-visual" aria-label="七阶段探究流">
+        <div class="stage-spine">
+          <div class="stage">
+            <span class="stage-number">01</span>
+            <div class="stage-text"><div class="stage-title">观察起点</div><div class="stage-role">情境探寻专家</div></div>
+          </div>
+          <div class="stage">
+            <span class="stage-number">02</span>
+            <div class="stage-text"><div class="stage-title">循疑问题</div><div class="stage-role">问题提炼导师</div></div>
+          </div>
+          <div class="stage">
+            <span class="stage-number">03</span>
+            <div class="stage-text"><div class="stage-title">可能的猜想</div><div class="stage-role">头脑风暴教练</div></div>
+          </div>
+          <div class="stage">
+            <span class="stage-number">04</span>
+            <div class="stage-text"><div class="stage-title">实验设计</div><div class="stage-role">实验设计专家</div></div>
+          </div>
+          <div class="stage">
+            <span class="stage-number">05</span>
+            <div class="stage-text"><div class="stage-title">实验中的新问题</div><div class="stage-role">教育契机捕手</div></div>
+          </div>
+          <div class="stage">
+            <span class="stage-number">06</span>
+            <div class="stage-text"><div class="stage-title">可能的结论</div><div class="stage-role">证据链整理师</div></div>
+          </div>
+          <div class="stage">
+            <span class="stage-number">07</span>
+            <div class="stage-text"><div class="stage-title">延伸与新问题</div><div class="stage-role">探究闭环架构师</div></div>
+          </div>
+        </div>
+      </aside>
+    </header>
+
+    <section>
+      <div class="section-title">
+        <span>01</span>
+        <h2>设计出发点</h2>
+      </div>
+      <div class="idea-grid">
+        <article class="idea">
+          <strong>不是一次性生成</strong>
+          <p>探究式教案需要从现象、问题、猜想、实验到结论逐步形成，系统因此以阶段为组织单位。</p>
+        </article>
+        <article class="idea">
+          <strong>教师始终在环</strong>
+          <p>教师输入、确认阶段草稿、修订内容，模型只提供辅助分析和整合建议。</p>
+        </article>
+        <article class="idea">
+          <strong>专家按阶段路由</strong>
+          <p>七个阶段绑定七个专家 Agent，后端根据当前阶段自动选择，不让前端手动切换专家。</p>
+        </article>
+        <article class="idea">
+          <strong>过程可恢复</strong>
+          <p>每轮保存教师、专家、主导师三条消息，回滚时恢复上一版草稿，保证协作过程可追溯。</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-title">
+        <span>02</span>
+        <h2>系统编排方式</h2>
+      </div>
+      <div class="architecture">
+        <article class="module">
+          <h3>Vue 3 工作台</h3>
+          <p>承载流程选择、双角色对话、阶段草稿编辑和 Markdown 导出。</p>
+        </article>
+        <div class="arrow" aria-hidden="true"></div>
+        <article class="module core">
+          <h3>FastAPI 编排层</h3>
+          <p>负责会话、阶段状态机、Agent 路由、SSE 流式输出、消息落库与回滚。确定性的流程控制都放在 Python 后端里。</p>
+        </article>
+        <div class="arrow" aria-hidden="true"></div>
+        <article class="module agent">
+          <h3>阶段专家 + 主导师</h3>
+          <p>阶段专家给出专业意见，主教学导师贯穿全链路，整合历史、草稿和专家输出。</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-title">
+        <span>03</span>
+        <h2>七阶段教学流</h2>
+      </div>
+      <div class="timeline">
+        <div class="phase"><b>01</b><strong>观察起点</strong><small>建立真实情境</small></div>
+        <div class="phase"><b>02</b><strong>循疑问题</strong><small>提炼探究主问题</small></div>
+        <div class="phase"><b>03</b><strong>可能的猜想</strong><small>整理可验证假设</small></div>
+        <div class="phase"><b>04</b><strong>实验设计</strong><small>明确变量与证据</small></div>
+        <div class="phase"><b>05</b><strong>新问题</strong><small>捕捉生成性契机</small></div>
+        <div class="phase"><b>06</b><strong>可能的结论</strong><small>形成证据链推理</small></div>
+        <div class="phase"><b>07</b><strong>延伸与新问题</strong><small>进入下一轮探究</small></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-title">
+        <span>04</span>
+        <h2>当前项目状态</h2>
+      </div>
+      <div class="status-band">
+        <article class="status done">
+          <h3>已完成</h3>
+          <p>基础后端、流程会话、SSE 对话、三消息落库、草稿保存、回滚和 Markdown 导出。</p>
+        </article>
+        <article class="status">
+          <h3>已接入</h3>
+          <p>主导师通过 OpenRouter 调用 DeepSeek；七阶段 Dify 专家接口已预留并支持 Mock 降级。</p>
+        </article>
+        <article class="status next">
+          <h3>下一步</h3>
+          <p>配置真实 Dify Chatflow 与阶段知识库，补齐端到端验收和教师试用反馈。</p>
+        </article>
+      </div>
+    </section>
+
+    <footer>
+      这是 `InquiryTeachingPythonService` 的项目介绍页，只说明新建项目的设计思路；旧项目目录仍作为参考和资料保留。
+    </footer>
+  </main>
+</body>
+</html>
