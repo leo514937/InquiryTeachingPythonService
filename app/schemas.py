@@ -17,11 +17,25 @@ class ChatModeRequest(BaseModel):
     chat_mode: Literal["main", "subagent"]
 
 
+class DraftModeRequest(BaseModel):
+    enabled: bool
+
+
+class DraftSelection(BaseModel):
+    selected_text: str = ""
+    start_offset: int = 0
+    end_offset: int = 0
+    stage_id: str = ""
+    block_id: str | None = None
+
+
 class ChatRequest(BaseModel):
     type: Literal["chat", "sys_action"] = "chat"
     message: str = ""
     action: Literal["next_stage", "prev_stage", "intro", "confirm_stage"] | None = None
     final_content: str | None = None
+    draft_request_kind: Literal["generate", "edit"] | None = None
+    selection: DraftSelection | None = None
 
 
 class RollbackRequest(BaseModel):
@@ -31,6 +45,15 @@ class RollbackRequest(BaseModel):
 
 class DraftUpdateRequest(BaseModel):
     draft_content: str
+
+
+class DraftProposalActionItem(BaseModel):
+    hunk_id: str
+    action: Literal["accept", "reject"]
+
+
+class DraftProposalActionRequest(BaseModel):
+    actions: list[DraftProposalActionItem]
 
 
 class ConfirmStageRequest(BaseModel):

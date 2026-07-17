@@ -12,6 +12,7 @@ class SessionModel(Base):
     flow_name = Column(String, nullable=False, default="inquiry_7_stage")
     current_stage_index = Column(Integer, default=0)
     status = Column(String, default="active")
+    draft_mode_enabled = Column(Integer, default=0)
     created_at = Column(String, nullable=False)
     updated_at = Column(String, nullable=False)
 
@@ -69,6 +70,20 @@ class StageOutputModel(Base):
     updated_at = Column(String, nullable=False)
 
     __table_args__ = (UniqueConstraint("session_id", "stage_id", name="uq_session_stage"),)
+
+
+class DraftProposalModel(Base):
+    __tablename__ = "draft_proposals"
+
+    id = Column(String, primary_key=True)
+    session_id = Column(String, nullable=False, index=True)
+    stage_id = Column(String, nullable=False, index=True)
+    base_content = Column(Text, default="")
+    candidate_content = Column(Text, default="")
+    diff_json = Column(Text, nullable=False, default="[]")
+    status = Column(String, nullable=False, default="pending")
+    created_at = Column(String, nullable=False)
+    updated_at = Column(String, nullable=False)
 
 
 class RagRecordModel(Base):

@@ -18,7 +18,11 @@ from app.schemas import ChatRequest
 from app.services.context_service import ContextService
 from app.services.app_settings_service import SUBAGENT_MODE, get_global_chat_mode
 from app.services.dify_agent_service import DifyAgentError, DifyAgentService
+from app.services.draft_edit_service import DraftEditService
+from app.services.draft_generate_service import DraftGenerateService
 from app.services.draft_service import DraftService
+from app.services.draft_proposal_service import DraftProposalService
+from app.services.draft_target_resolver import DraftTarget, DraftTargetResolver
 from app.services.llm_service import LLMService
 from app.services.prompt_service import PromptService
 from app.workflow.flows import get_flow
@@ -113,7 +117,10 @@ def save_chat_result(
     expert_message: str = "",
     expert_agent_id: str,
     main_message: str = "",
+    draft_message: str = "",
+    draft_agent_id: str = "draft_agent",
     draft_content: str = "",
+    update_stage_output: bool = False,
 ) -> dict:
     db = SessionLocal()
     try:
@@ -154,6 +161,7 @@ def save_chat_result(
         assistant_message_type = "stage_expert"
         assistant_message_agent_id = expert_agent_id
         main_timestamp = now_iso()
+        draft_msg_id = None
         if main_message:
             main_msg_id = new_id("msg")
             assistant_message_id = main_msg_id
@@ -172,6 +180,24 @@ def save_chat_result(
                 )
             )
 
+        if draft_message:
+            draft_msg_id = new_id("msg")
+            assistant_message_id = draft_msg_id
+            assistant_message_type = "draft_tutor"
+            assistant_message_agent_id = draft_agent_id
+            db.add(
+                MessageModel(
+                    id=draft_msg_id,
+                    session_id=session_id,
+                    stage_id=stage_id,
+                    role="assistant",
+                    content=DraftService.strip_draft_markers(draft_message),
+                    agent_id=draft_agent_id,
+                    message_type="draft_tutor",
+                    created_at=main_timestamp,
+                )
+            )
+
         output = (
             db.query(StageOutputModel)
             .filter(
@@ -182,7 +208,7 @@ def save_chat_result(
         )
         draft_before = output.draft_content or "" if output else ""
         draft_after = draft_content or draft_before
-        if output and draft_content and main_message:
+        if output and draft_content and update_stage_output:
             output.draft_content = draft_content
             output.updated_at = main_timestamp
 
@@ -210,12 +236,26 @@ def save_chat_result(
             "user_message_id": user_msg_id,
             "expert_message_id": expert_msg_id,
             "main_message_id": main_msg_id,
+            "draft_message_id": draft_msg_id,
             "assistant_message_id": assistant_message_id or expert_msg_id or main_msg_id,
             "assistant_message_type": assistant_message_type,
             "assistant_message_agent_id": assistant_message_agent_id,
         }
     finally:
         db.close()
+
+
+def target_to_meta_range(target: DraftTarget) -> dict:
+    return {
+        "start_offset": target.start_offset,
+        "end_offset": target.end_offset,
+    }
+
+
+def get_selection_text(payload: ChatRequest) -> str:
+    if not payload.selection:
+        return ""
+    return (payload.selection.selected_text or "").strip()
 
 
 def apply_stage_action(session_id: str, payload: ChatRequest) -> dict:
@@ -321,16 +361,28 @@ async def chat(session_id: str, payload: ChatRequest, db: Session = Depends(get_
         "flow_display_name": flow["display_name"],
         "stage": stage,
         "current_draft": current_draft,
+        "draft_mode_enabled": bool(sess.draft_mode_enabled),
         "dialog_history": dialog_history,
         "llm_history": llm_history,
         "doc_input": doc_input,
+        "selection_text": get_selection_text(payload),
     }
 
     async def chat_events():
         expert_text = ""
         main_text = ""
-        last_draft = ""
+        draft_text = ""
         next_conversation_id = conversation_id
+        final_draft = current_draft
+        draft_updated = False
+        draft_failed = False
+        persist_draft_directly = False
+        proposal_payload = None
+        draft_status_text = ""
+        proposal_kind = None
+        draft_request_kind = payload.draft_request_kind or (
+            "generate" if not session_snapshot["current_draft"].strip() else "edit"
+        )
 
         yield format_sse(
             "stage",
@@ -339,9 +391,206 @@ async def chat(session_id: str, payload: ChatRequest, db: Session = Depends(get_
                 "flow_name": session_snapshot["flow_name"],
                 "flow_display_name": session_snapshot["flow_display_name"],
                 "chat_mode": chat_mode,
+                "draft_mode_enabled": session_snapshot["draft_mode_enabled"],
             },
         )
-        if chat_mode == SUBAGENT_MODE:
+        if session_snapshot["draft_mode_enabled"]:
+            draft_status_text = "我先根据您的想法整理右侧草案，您稍等一下。"
+            yield format_sse(
+                "agent",
+                {
+                    "mode": "main",
+                    "agent_id": "main_agent",
+                    "agent_name": "流程引导Agent",
+                    "message_type": "main_tutor",
+                },
+            )
+            yield format_sse(
+                "status",
+                {
+                    "phase": "draft",
+                    "state": "start",
+                    "text": draft_status_text,
+                },
+            )
+            try:
+                DraftProposalService.reject_pending_proposals(
+                    db,
+                    session_id=session_id,
+                    stage_id=stage["id"],
+                )
+                db.commit()
+                if draft_request_kind == "generate":
+                    async for candidate_content, chunk in DraftGenerateService.stream_candidate(
+                        topic=session_snapshot["topic"],
+                        flow_display_name=session_snapshot["flow_display_name"],
+                        stage=session_snapshot["stage"],
+                        dialog_history=session_snapshot["dialog_history"],
+                        doc_input=session_snapshot["doc_input"],
+                        current_draft=session_snapshot["current_draft"],
+                        user_message=payload.message,
+                        llm_history=session_snapshot["llm_history"],
+                    ):
+                        draft_text = candidate_content
+                        yield format_sse(
+                            "draft",
+                            {
+                                "text": chunk,
+                                "content": draft_text,
+                                "agent_id": "draft_agent",
+                                "agent_name": "草案转写Agent",
+                                "message_type": "draft_tutor",
+                            },
+                        )
+                    if draft_text and draft_text != session_snapshot["current_draft"]:
+                        if not session_snapshot["current_draft"].strip():
+                            proposal_kind = "generate"
+                            draft_updated = True
+                            persist_draft_directly = True
+                            final_draft = draft_text
+                            draft_status_text = "右侧草案已经整理好了，已直接写入草案。"
+                        else:
+                            proposal = DraftProposalService.create_proposal(
+                                db,
+                                session_id=session_id,
+                                stage_id=stage["id"],
+                                base_content=session_snapshot["current_draft"],
+                                candidate_content=draft_text,
+                                meta={
+                                    "proposal_kind": "generate",
+                                    "target_mode": None,
+                                    "target_summary": None,
+                                    "target_range": None,
+                                },
+                            )
+                            if proposal:
+                                db.commit()
+                                db.refresh(proposal)
+                                proposal_payload = DraftProposalService.serialize(proposal)
+                                proposal_kind = "generate"
+                                final_draft = draft_text
+                                draft_updated = True
+                                draft_status_text = "右侧草案已经整理好了，老师可以直接审阅或继续修改。"
+                                yield format_sse("proposal", {"proposal": proposal_payload})
+                            else:
+                                proposal_kind = "generate"
+                                draft_status_text = "我刚刚对照检查过，右侧草案暂时不需要调整。"
+                    else:
+                        proposal_kind = "generate"
+                        draft_status_text = "我刚刚对照检查过，右侧草案暂时不需要调整。"
+                else:
+                    if not payload.selection or not get_selection_text(payload):
+                        draft_failed = True
+                        proposal_kind = "edit"
+                        draft_status_text = "请先选中右侧草案中需要修改的内容，我再继续编辑。"
+                        yield format_sse(
+                            "status",
+                            {
+                                "phase": "draft",
+                                "state": "error",
+                                "text": draft_status_text,
+                            },
+                        )
+                        yield format_sse(
+                            "warning",
+                            {
+                                "agent_id": "draft_agent",
+                                "agent_name": "草案编辑Agent",
+                                "message": draft_status_text,
+                            },
+                        )
+                        return
+                    target = DraftTargetResolver.resolve(
+                        current_draft=session_snapshot["current_draft"],
+                        selection=(
+                            payload.selection.model_dump()
+                            if hasattr(payload.selection, "model_dump")
+                            else payload.selection.dict()
+                        )
+                        if payload.selection
+                        else None,
+                    )
+                    if not target:
+                        draft_failed = True
+                        proposal_kind = "edit"
+                        draft_status_text = "我还没有定位到要修改的内容，您可以先选中右侧相关段落再试。"
+                    else:
+                        draft_status_text = "我先按您选中的这段来调整右侧草案。"
+                        yield format_sse(
+                            "status",
+                            {
+                                "phase": "draft",
+                                "state": "start",
+                                "text": draft_status_text,
+                            },
+                        )
+                        async for candidate_content, _replacement, chunk in DraftEditService.stream_candidate(
+                            topic=session_snapshot["topic"],
+                            flow_display_name=session_snapshot["flow_display_name"],
+                            stage=session_snapshot["stage"],
+                            dialog_history=session_snapshot["dialog_history"],
+                            doc_input=session_snapshot["doc_input"],
+                            current_draft=session_snapshot["current_draft"],
+                            user_message=payload.message,
+                            llm_history=session_snapshot["llm_history"],
+                            target=target,
+                        ):
+                            draft_text = candidate_content
+                            yield format_sse(
+                                "draft",
+                                {
+                                    "text": chunk,
+                                    "content": draft_text,
+                                    "agent_id": "draft_agent",
+                                    "agent_name": "草案编辑Agent",
+                                    "message_type": "draft_tutor",
+                                },
+                            )
+                        proposal = DraftProposalService.create_proposal(
+                            db,
+                            session_id=session_id,
+                            stage_id=stage["id"],
+                            base_content=session_snapshot["current_draft"],
+                            candidate_content=draft_text,
+                            meta={
+                                "proposal_kind": "edit",
+                                "target_mode": target.mode,
+                                "target_summary": target.target_summary,
+                                "target_range": target_to_meta_range(target),
+                            },
+                        )
+                        if proposal:
+                            db.commit()
+                            db.refresh(proposal)
+                            proposal_payload = DraftProposalService.serialize(proposal)
+                            proposal_kind = "edit"
+                            final_draft = draft_text
+                            draft_updated = True
+                            draft_status_text = "右侧草案已经整理好了，老师可以直接审阅或继续修改。"
+                            yield format_sse("proposal", {"proposal": proposal_payload})
+                        else:
+                            proposal_kind = "edit"
+                            draft_status_text = "我刚刚对照检查过，右侧草案暂时不需要调整。"
+            except Exception:
+                draft_failed = True
+                draft_status_text = "这次草案整理没有成功，右侧仍保留原草案，我们可以换个说法再试。"
+            yield format_sse(
+                "status",
+                {
+                    "phase": "draft",
+                    "state": "done" if not draft_failed else "error",
+                    "text": draft_status_text,
+                },
+            )
+            if draft_failed:
+                main_text = draft_status_text
+            else:
+                main_text = draft_status_text
+                if not draft_updated and draft_text and draft_text == session_snapshot["current_draft"]:
+                    final_draft = session_snapshot["current_draft"]
+                elif not draft_updated:
+                    final_draft = session_snapshot["current_draft"]
+        elif chat_mode == SUBAGENT_MODE:
             yield format_sse(
                 "agent",
                 {
@@ -365,6 +614,7 @@ async def chat(session_id: str, payload: ChatRequest, db: Session = Depends(get_
                 dialog_history=session_snapshot["dialog_history"],
                 doc_input=session_snapshot["doc_input"],
                 current_draft=session_snapshot["current_draft"],
+                selection_text=session_snapshot["selection_text"],
             ):
                 text = item.get("text", "")
                 next_conversation_id = item.get("conversation_id") or next_conversation_id
@@ -387,24 +637,33 @@ async def chat(session_id: str, payload: ChatRequest, db: Session = Depends(get_
                 {
                     "mode": "main",
                     "agent_id": "main_agent",
-                    "agent_name": "主教学导师",
+                    "agent_name": "流程引导Agent",
                     "message_type": "main_tutor",
                 },
             )
-            system_prompt = PromptService.build_main_agent_prompt(
+            yield format_sse(
+                "status",
+                {
+                    "phase": "guide",
+                    "state": "start",
+                    "text": "正在生成流程引导...",
+                },
+            )
+            guide_prompt = PromptService.build_guide_agent_prompt(
                 topic=session_snapshot["topic"],
                 flow_display_name=session_snapshot["flow_display_name"],
                 stage=session_snapshot["stage"],
-                expert_output="",
                 dialog_history=session_snapshot["dialog_history"],
                 doc_input=session_snapshot["doc_input"],
                 current_draft=session_snapshot["current_draft"],
-                expert_degraded=False,
+                user_message=payload.message,
+                selection_text=session_snapshot["selection_text"],
             )
             async for text in LLMService.chat_stream(
-                system_prompt,
+                guide_prompt,
                 session_snapshot["llm_history"],
                 payload.message,
+                response_kind="guide",
             ):
                 main_text += text
                 yield format_sse(
@@ -412,23 +671,19 @@ async def chat(session_id: str, payload: ChatRequest, db: Session = Depends(get_
                     {
                         "text": text,
                         "agent_id": "main_agent",
-                        "agent_name": "主教学导师",
+                        "agent_name": "流程引导Agent",
                         "message_type": "main_tutor",
                     },
                 )
-                draft = DraftService.extract_draft(main_text)
-                if draft and draft != last_draft:
-                    last_draft = draft
-                    yield format_sse(
-                        "draft",
-                        {
-                            "content": draft,
-                            "agent_id": "main_agent",
-                            "message_type": "main_tutor",
-                        },
-                    )
+            yield format_sse(
+                "status",
+                {
+                    "phase": "guide",
+                    "state": "done",
+                    "text": "流程引导完成",
+                },
+            )
 
-        final_draft = DraftService.extract_draft(main_text)
         message_ids = save_chat_result(
             session_id=session_id,
             stage_id=stage["id"],
@@ -436,19 +691,28 @@ async def chat(session_id: str, payload: ChatRequest, db: Session = Depends(get_
             expert_message=expert_text,
             expert_agent_id=stage_agent_id,
             main_message=main_text,
-            draft_content=final_draft,
+            draft_message="",
+            draft_agent_id="draft_agent",
+            draft_content=final_draft if session_snapshot["draft_mode_enabled"] else "",
+            update_stage_output=persist_draft_directly,
         )
         yield format_sse(
             "done",
             {
                 **message_ids,
                 "message_id": message_ids["assistant_message_id"],
-                "draft_updated": bool(final_draft),
+                "draft_updated": draft_updated,
+                "draft_proposal": proposal_payload,
+                "draft_failed": draft_failed,
+                "draft_status_text": draft_status_text,
+                "draft_request_kind": draft_request_kind,
+                "proposal_kind": proposal_kind,
                 "conversation_id": next_conversation_id if expert_text else None,
                 "degraded": False,
                 "failed_agent_id": None,
                 "warning": None,
                 "chat_mode": chat_mode,
+                "draft_mode_enabled": session_snapshot["draft_mode_enabled"],
             },
         )
 

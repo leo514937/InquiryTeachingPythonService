@@ -42,6 +42,7 @@ class DifyAgentService:
         dialog_history: str,
         doc_input: str,
         current_draft: str,
+        selection_text: str = "",
     ) -> AsyncIterator[dict]:
         settings = get_settings()
         system_prompt = PromptService.build_stage_agent_prompt(
@@ -52,6 +53,7 @@ class DifyAgentService:
             doc_input=doc_input,
             current_draft=current_draft,
             user_message=message,
+            selection_text=selection_text,
         )
 
         if settings.llm_api_key:
@@ -68,6 +70,7 @@ class DifyAgentService:
             stage,
             message,
             conversation_id,
+            selection_text,
         ):
             yield event
 
@@ -77,13 +80,20 @@ class DifyAgentService:
         stage: dict,
         message: str,
         conversation_id: str,
+        selection_text: str = "",
     ) -> AsyncIterator[dict]:
         next_conversation_id = conversation_id or f"mock_{agent.id}"
-        reply = (
-            f"【{agent.name}】针对“{stage['name']}”阶段，我建议先围绕“{stage['direction']}”展开。"
-            f"结合教师当前输入“{message}”，可以优先补齐学生可观察对象、需要记录的证据，"
-            "并设计一个能推动学生继续追问的关键问题。"
-        )
+        if selection_text.strip():
+            reply = (
+                f"【{agent.name}】针对“{stage['name']}”阶段，我先只围绕你选中的这段内容来点评。"
+                f"结合教师当前输入“{message}”，这段内容更需要补齐与“{stage['direction']}”相关的关键证据、判断依据和追问设计。"
+            )
+        else:
+            reply = (
+                f"【{agent.name}】针对“{stage['name']}”阶段，我建议先围绕“{stage['direction']}”展开。"
+                f"结合教师当前输入“{message}”，可以优先补齐学生可观察对象、需要记录的证据，"
+                "并设计一个能推动学生继续追问的关键问题。"
+            )
         for index in range(0, len(reply), 12):
             await asyncio.sleep(0.01)
             yield {

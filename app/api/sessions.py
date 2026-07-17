@@ -8,6 +8,7 @@ from app.db.database import get_db
 from app.db.models import (
     AgentConversationModel,
     ChatTurnModel,
+    DraftProposalModel,
     MessageModel,
     SessionModel,
     StageOutputModel,
@@ -15,12 +16,15 @@ from app.db.models import (
 )
 from app.schemas import (
     ConfirmStageRequest,
+    DraftModeRequest,
+    DraftProposalActionRequest,
     DraftUpdateRequest,
     RollbackRequest,
     SelectFlowRequest,
     SessionCreate,
 )
 from app.services.dify_agent_service import DifyAgentService
+from app.services.draft_proposal_service import DraftProposalService
 from app.workflow.flows import get_flow, get_stage
 
 
@@ -77,6 +81,7 @@ def serialize_session(sess: SessionModel, db: Session) -> dict:
         "current_stage_index": sess.current_stage_index,
         "current_stage": current_stage,
         "status": sess.status,
+        "draft_mode_enabled": bool(sess.draft_mode_enabled),
         "outputs": [
             {
                 "stage_id": item.stage_id,
@@ -107,6 +112,7 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
         flow_name=payload.flow_name,
         current_stage_index=0,
         status="active",
+        draft_mode_enabled=0,
         created_at=timestamp,
         updated_at=timestamp,
     )
@@ -147,6 +153,7 @@ def list_sessions(db: Session = Depends(get_db), limit: int = 20):
                 "flow_display_name": flow["display_name"],
                 "current_stage_index": sess.current_stage_index,
                 "status": sess.status,
+                "draft_mode_enabled": bool(sess.draft_mode_enabled),
                 "updated_at": sess.updated_at,
                 "created_at": sess.created_at,
             }
@@ -173,6 +180,7 @@ def delete_session(session_id: str, db: Session = Depends(get_db)):
     db.query(AgentConversationModel).filter(AgentConversationModel.session_id == session_id).delete()
     db.query(MessageModel).filter(MessageModel.session_id == session_id).delete()
     db.query(ChatTurnModel).filter(ChatTurnModel.session_id == session_id).delete()
+    db.query(DraftProposalModel).filter(DraftProposalModel.session_id == session_id).delete()
     db.query(RagRecordModel).filter(RagRecordModel.session_id == session_id).delete()
     
     db.delete(sess)
@@ -219,6 +227,7 @@ def select_flow(session_id: str, payload: SelectFlowRequest, db: Session = Depen
     db.query(StageOutputModel).filter(StageOutputModel.session_id == session_id).delete()
     db.query(AgentConversationModel).filter(AgentConversationModel.session_id == session_id).delete()
     db.query(ChatTurnModel).filter(ChatTurnModel.session_id == session_id).delete()
+    db.query(DraftProposalModel).filter(DraftProposalModel.session_id == session_id).delete()
     db.query(RagRecordModel).filter(RagRecordModel.session_id == session_id).delete()
     if payload.clear_messages:
         db.query(MessageModel).filter(MessageModel.session_id == session_id).delete()
@@ -226,6 +235,7 @@ def select_flow(session_id: str, payload: SelectFlowRequest, db: Session = Depen
     sess.flow_name = payload.flow_name
     sess.current_stage_index = 0
     sess.status = "active"
+    sess.draft_mode_enabled = 0
     sess.updated_at = now_iso()
     create_stage_outputs(db, session_id, payload.flow_name)
     db.commit()
@@ -253,6 +263,8 @@ def confirm_stage(session_id: str, payload: ConfirmStageRequest, db: Session = D
         output.confirmed = 1
         output.updated_at = now_iso()
 
+    DraftProposalService.reject_pending_proposals(db, session_id=session_id, stage_id=stage["id"])
+
     sess.current_stage_index += 1
     if sess.current_stage_index >= len(flow["stages"]):
         sess.status = "completed"
@@ -260,6 +272,59 @@ def confirm_stage(session_id: str, payload: ConfirmStageRequest, db: Session = D
     db.commit()
     db.refresh(sess)
     return {"code": 0, "message": "stage confirmed", "data": serialize_session(sess, db)}
+
+
+@router.put("/{session_id}/draft-mode")
+def set_draft_mode(session_id: str, payload: DraftModeRequest, db: Session = Depends(get_db)):
+    sess = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    sess.draft_mode_enabled = 1 if payload.enabled else 0
+    sess.updated_at = now_iso()
+    db.commit()
+    db.refresh(sess)
+    return {"code": 0, "message": "success", "data": serialize_session(sess, db)}
+
+
+@router.get("/{session_id}/draft-proposal")
+def get_draft_proposal(session_id: str, stage_id: str, db: Session = Depends(get_db)):
+    proposal = DraftProposalService.get_active_proposal(db, session_id, stage_id)
+    return {"code": 0, "message": "success", "data": DraftProposalService.serialize(proposal)}
+
+
+@router.post("/{session_id}/draft-proposals/{proposal_id}/actions")
+def apply_draft_proposal_actions(
+    session_id: str,
+    proposal_id: str,
+    payload: DraftProposalActionRequest,
+    db: Session = Depends(get_db),
+):
+    proposal = db.query(DraftProposalModel).filter(
+        DraftProposalModel.id == proposal_id,
+        DraftProposalModel.session_id == session_id,
+    ).first()
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Draft proposal not found")
+
+    stage_output = (
+        db.query(StageOutputModel)
+        .filter(
+            StageOutputModel.session_id == session_id,
+            StageOutputModel.stage_id == proposal.stage_id,
+        )
+        .first()
+    )
+    updated = DraftProposalService.finalize_actions(
+        db,
+        proposal_id=proposal_id,
+        actions=[item.model_dump() if hasattr(item, "model_dump") else item.dict() for item in payload.actions],
+        stage_output=stage_output,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Draft proposal not found")
+    db.commit()
+    return {"code": 0, "message": "success", "data": updated}
 
 
 @router.post("/{session_id}/rollback")
@@ -368,6 +433,7 @@ def update_stage_draft(
         raise HTTPException(status_code=404, detail="Stage output not found")
     output.draft_content = payload.draft_content
     output.updated_at = now_iso()
+    DraftProposalService.reject_pending_proposals(db, session_id=session_id, stage_id=stage_id)
     db.commit()
     return {
         "code": 0,

@@ -21,6 +21,7 @@ from app.db.database import SessionLocal, engine
 from app.db.models import (
     AgentConversationModel,
     ChatTurnModel,
+    DraftProposalModel,
     RagRecordModel,
 )
 from app.main import app
@@ -91,6 +92,14 @@ class AgentArchitectureApiTests(unittest.TestCase):
 
     def get_messages(self, session_id: str) -> list[dict]:
         response = self.client.get(f"/api/sessions/{session_id}/messages")
+        self.assertEqual(response.status_code, 200)
+        return response.json()["data"]
+
+    def set_draft_mode(self, session_id: str, enabled: bool) -> dict:
+        response = self.client.put(
+            f"/api/sessions/{session_id}/draft-mode",
+            json={"enabled": enabled},
+        )
         self.assertEqual(response.status_code, 200)
         return response.json()["data"]
 
@@ -198,6 +207,107 @@ class AgentArchitectureApiTests(unittest.TestCase):
             session = self.get_session(session_id)
             output = next(item for item in session["outputs"] if item["stage_id"] == stage_id)
             self.assertEqual(output["draft_content"], content)
+        finally:
+            self.delete_session(session_id)
+
+    def test_first_draft_generation_writes_directly_without_pending_proposal(self):
+        session_id, stage_id = self.create_session()
+        try:
+            self.set_draft_mode(session_id, True)
+            _, events = self.stream_chat(session_id, "请先生成一版观察阶段草案")
+
+            event_names = [name for name, _ in events]
+            self.assertIn("draft", event_names)
+            self.assertNotIn("proposal", event_names)
+
+            done_payload = events[-1][1]
+            self.assertTrue(done_payload["draft_updated"])
+            self.assertIsNone(done_payload["draft_proposal"])
+            self.assertEqual(done_payload["draft_request_kind"], "generate")
+            self.assertEqual(done_payload["proposal_kind"], "generate")
+
+            session = self.get_session(session_id)
+            output = next(item for item in session["outputs"] if item["stage_id"] == stage_id)
+            self.assertTrue(output["draft_content"])
+
+            proposal_response = self.client.get(
+                f"/api/sessions/{session_id}/draft-proposal",
+                params={"stage_id": stage_id},
+            )
+            self.assertEqual(proposal_response.status_code, 200)
+            self.assertIsNone(proposal_response.json()["data"])
+
+            with SessionLocal() as db:
+                self.assertEqual(
+                    db.query(DraftProposalModel)
+                    .filter(
+                        DraftProposalModel.session_id == session_id,
+                        DraftProposalModel.stage_id == stage_id,
+                        DraftProposalModel.status == "pending",
+                    )
+                    .count(),
+                    0,
+                )
+        finally:
+            self.delete_session(session_id)
+
+    def test_existing_draft_edit_still_creates_pending_proposal(self):
+        session_id, stage_id = self.create_session()
+        try:
+            self.set_draft_mode(session_id, True)
+            base_content = "### 观察阶段草案\n\n1. 学生先记录现象。\n2. 教师组织交流。"
+            response = self.client.put(
+                f"/api/sessions/{session_id}/stages/{stage_id}/draft",
+                json={"draft_content": base_content},
+            )
+            self.assertEqual(response.status_code, 200)
+
+            edit_response = self.client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={
+                    "type": "chat",
+                    "message": "把第一条改得更具体一点",
+                    "draft_request_kind": "edit",
+                    "selection": {
+                        "selected_text": "1. 学生先记录现象。",
+                        "start_offset": 15,
+                        "end_offset": 27,
+                        "stage_id": stage_id,
+                    },
+                },
+            )
+            self.assertEqual(edit_response.status_code, 200)
+            events = parse_sse(edit_response.text)
+            event_names = [name for name, _ in events]
+
+            self.assertIn("draft", event_names)
+            self.assertIn("proposal", event_names)
+
+            done_payload = events[-1][1]
+            self.assertTrue(done_payload["draft_updated"])
+            self.assertIsNotNone(done_payload["draft_proposal"])
+            self.assertEqual(done_payload["draft_request_kind"], "edit")
+            self.assertEqual(done_payload["proposal_kind"], "edit")
+
+            proposal_response = self.client.get(
+                f"/api/sessions/{session_id}/draft-proposal",
+                params={"stage_id": stage_id},
+            )
+            self.assertEqual(proposal_response.status_code, 200)
+            proposal_data = proposal_response.json()["data"]
+            self.assertIsNotNone(proposal_data)
+            self.assertEqual(proposal_data["proposal_kind"], "edit")
+            with SessionLocal() as db:
+                self.assertEqual(
+                    db.query(DraftProposalModel)
+                    .filter(
+                        DraftProposalModel.session_id == session_id,
+                        DraftProposalModel.stage_id == stage_id,
+                        DraftProposalModel.status == "pending",
+                    )
+                    .count(),
+                    1,
+                )
         finally:
             self.delete_session(session_id)
 

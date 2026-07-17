@@ -1,6 +1,8 @@
 import type {
   DifyAgentItem,
   ChatMode,
+  DraftProposal,
+  DraftSelection,
   FlowInfo,
   MessageItem,
   SessionDetail,
@@ -87,6 +89,38 @@ export async function setChatMode(chatMode: ChatMode): Promise<ChatMode> {
   return payload.data?.chat_mode || "main";
 }
 
+export async function setDraftMode(sessionId: string, enabled: boolean): Promise<SessionDetail> {
+  const payload = await readJson<ApiEnvelope<SessionDetail>>(`${API_BASE}/api/sessions/${sessionId}/draft-mode`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  return payload.data;
+}
+
+export async function getDraftProposal(sessionId: string, stageId: string): Promise<DraftProposal | null> {
+  const payload = await readJson<ApiEnvelope<DraftProposal | null>>(
+    `${API_BASE}/api/sessions/${sessionId}/draft-proposal?stage_id=${encodeURIComponent(stageId)}`,
+  );
+  return payload.data || null;
+}
+
+export async function applyDraftProposalActions(
+  sessionId: string,
+  proposalId: string,
+  actions: { hunk_id: string; action: "accept" | "reject" }[],
+): Promise<DraftProposal> {
+  const payload = await readJson<ApiEnvelope<DraftProposal>>(
+    `${API_BASE}/api/sessions/${sessionId}/draft-proposals/${proposalId}/actions`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actions }),
+    },
+  );
+  return payload.data;
+}
+
 export async function saveDraft(sessionId: string, stageId: string, draftContent: string): Promise<void> {
   await readJson(`${API_BASE}/api/sessions/${sessionId}/stages/${stageId}/draft`, {
     method: "PUT",
@@ -123,13 +157,24 @@ type StreamHandlers = {
   agent?: (data: any) => void | Promise<void>;
   delta?: (data: any) => void | Promise<void>;
   draft?: (data: any) => void | Promise<void>;
+  proposal?: (data: any) => void | Promise<void>;
+  status?: (data: any) => void | Promise<void>;
   warning?: (data: any) => void | Promise<void>;
   done?: (data: any) => void | Promise<void>;
 };
 
+export type StreamChatPayload = {
+  type: "chat" | "sys_action";
+  message?: string;
+  action?: "next_stage" | "prev_stage" | "intro" | "confirm_stage";
+  final_content?: string;
+  draft_request_kind?: "generate" | "edit";
+  selection?: DraftSelection | null;
+};
+
 export async function streamChat(
   sessionId: string,
-  payload: Record<string, unknown>,
+  payload: StreamChatPayload,
   handlers: StreamHandlers,
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/api/sessions/${sessionId}/chat`, {
