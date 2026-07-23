@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import chat, export, flows, health, sessions
+from app.api import chat, export, flows, health, sessions, settings
 from app.db.database import Base, engine
 from app.db.migrations import ensure_schema_compatibility
 
@@ -26,6 +26,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(flows.router)
 app.include_router(sessions.router)
+app.include_router(settings.router)
 app.include_router(chat.router)
 app.include_router(export.router)
 

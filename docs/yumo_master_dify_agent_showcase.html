@@ -1,0 +1,1065 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>禹墨教案辅助设计智能体｜主流程 Agent + 领域专家 Agent 原型</title>
+<style>
+:root{
+  --bg:#f5f1e8;
+  --paper:#fffaf0;
+  --ink:#2d2418;
+  --muted:#7b6b55;
+  --line:#dfd1b8;
+  --accent:#8b4b22;
+  --accent2:#2e6b5f;
+  --soft:#efe3cd;
+  --danger:#a43b2e;
+  --ok:#357a38;
+  --shadow:0 14px 40px rgba(77,52,21,.12);
+}
+*{box-sizing:border-box}
+html, body {
+  height: 100%;
+}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:linear-gradient(120deg,#f6efe2,#ede0cb);color:var(--ink);overflow:hidden;}
+
+/* 顶部布局控制区样式 */
+.layout-toolbar {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255,250,240,.96);
+  box-shadow: 0 4px 16px rgba(77,52,21,.08);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.layout-left, .layout-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.layout-icon {
+  border: 1px solid var(--line);
+  background: #fffdf7;
+  color: var(--accent);
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: bold;
+  transition: 0.2s;
+  outline: none;
+}
+.layout-icon:hover {
+  background: #f0dcc1;
+  border-color: #b27b4a;
+}
+.layout-title {
+  font-weight: 800;
+  color: var(--accent);
+  font-size: 16px;
+  letter-spacing: 0.05em;
+}
+.agent-btn {
+  border: 1px solid #c8a47f;
+  background: var(--accent2);
+  color: white;
+  border-radius: 10px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  transition: 0.2s;
+  box-shadow: 0 4px 12px rgba(46,107,95,.15);
+}
+.agent-btn:hover {
+  opacity: 0.9;
+  background: #235249;
+}
+
+/* @ 领域专家面板浮层样式 */
+.agent-panel{
+  position: fixed;
+  top: 62px;
+  right: 24px;
+  width: 320px;
+  max-height: 70dvh;
+  overflow: auto;
+  background: rgba(255,250,240,.98);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 14px;
+  z-index: 50;
+  display: none;
+}
+.agent-panel.active{
+  display: block;
+}
+.agent-panel-header{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  color: var(--accent);
+}
+.agent-panel-header b{
+  font-size: 15px;
+}
+.agent-panel-header button{
+  border: 0;
+  background: transparent;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.agent-list{
+  display: grid;
+  gap: 8px;
+}
+.agent-list button{
+  text-align: left;
+  border: 1px solid var(--line);
+  background: #fffdf7;
+  color: var(--ink);
+  border-radius: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 700;
+  transition: 0.15s;
+}
+.agent-list button:hover{
+  border-color: #b27b4a;
+  background: #f0dcc1;
+  color: #6b3514;
+}
+.agent-hint{
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* 实时草案大视图全屏模态框样式 */
+.draft-modal-mask{
+  position:fixed;
+  inset:0;
+  background:rgba(45,36,24,.46);
+  backdrop-filter:blur(4px);
+  z-index:100;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:28px;
+}
+.draft-modal-mask.active{
+  display:flex;
+}
+.draft-modal{
+  width:min(980px, 96vw);
+  height:min(820px, 92dvh);
+  background:rgba(255,250,240,.98);
+  border:1px solid var(--line);
+  border-radius:24px;
+  box-shadow:0 24px 80px rgba(45,36,24,.32);
+  display:grid;
+  grid-template-rows:auto minmax(0,1fr) auto;
+  overflow:hidden;
+}
+.draft-modal-head{
+  padding:18px 22px;
+  border-bottom:1px solid var(--line);
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  background:#fff6e8;
+}
+.draft-modal-label{
+  font-size:12px;
+  color:var(--muted);
+  font-weight:800;
+  margin-bottom:4px;
+}
+.draft-modal-head h2{
+  margin:0;
+  color:#6b3514;
+  font-size:24px;
+}
+.draft-modal-close{
+  border:0;
+  background:transparent;
+  color:var(--muted);
+  font-size:30px;
+  line-height:1;
+  cursor:pointer;
+  padding:2px 8px;
+}
+.draft-modal-close:hover{
+  color:var(--accent);
+}
+.draft-modal-body{
+  min-height:0;
+  overflow:auto;
+  padding:20px 22px;
+}
+.draft-modal-editor{
+  min-height:100%;
+  border:1px dashed #c9ad8c;
+  border-radius:16px;
+  background:#fffdf7;
+  padding:18px;
+  line-height:1.75;
+  font-size:16px;
+  outline:none;
+  overflow:auto;
+}
+.draft-modal-editor:focus{
+  border-color:#b27b4a;
+  box-shadow:0 0 0 3px rgba(178,123,74,.14);
+}
+.draft-modal-footer{
+  padding:14px 22px;
+  border-top:1px solid var(--line);
+  background:#fff6e8;
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+}
+
+/* App布局适配顶部工具栏 */
+.app{display:grid;grid-template-columns:260px 1fr 430px;height:calc(100dvh - 48px);min-height:0;gap:14px;padding:14px;}
+.panel{background:rgba(255,250,240,.94);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);overflow:hidden;min-height:0;}
+
+/* 左侧栏切换按钮及滚动 */
+.sidebar{
+  display:flex;
+  flex-direction:column;
+  padding:18px;
+  gap:14px;
+  overflow-y:auto;
+  overflow-x:hidden;
+  min-height:0;
+}
+.sidebar-switch{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+  background:#f3eadc;
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:5px;
+  flex-shrink:0;
+}
+.sidebar-switch-btn{
+  border:0;
+  background:transparent;
+  color:var(--muted);
+  border-radius:10px;
+  padding:9px 8px;
+  font-weight:800;
+  cursor:pointer;
+  outline:none;
+  transition: 0.15s;
+}
+.sidebar-switch-btn.active{
+  background:#fffdf7;
+  color:var(--accent);
+  box-shadow:0 4px 12px rgba(77,52,21,.08);
+}
+.sidebar-panel{
+  display:none;
+}
+.sidebar-panel.active{
+  display:block;
+}
+
+/* 会话存档左侧卡片样式 */
+.archive-left{
+  border:1px solid var(--line);
+  background:#fffdf7;
+  border-radius:16px;
+  padding:12px;
+}
+.archive-left h4{
+  margin:0 0 8px;
+  color:#6b3514;
+  font-size:14px;
+}
+.archive-item{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:8px;
+  font-size:12px;
+  background:#fffaf1;
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:8px;
+  margin-top:8px;
+}
+.archive-item span{
+  min-width:0;
+  line-height:1.45;
+}
+.archive-item span b{
+  color:#6b3514;
+}
+.archive-item em{
+  color:var(--muted);
+  font-style:normal;
+  display:block;
+  font-size:11px;
+}
+
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:700}
+input,select,textarea{width:100%;border:1px solid var(--line);background:#fffdf7;border-radius:12px;padding:10px 12px;color:var(--ink);font:inherit;outline:none}
+textarea{min-height:80px;resize:vertical}
+.stages{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.stage{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:14px;border:1px solid var(--line);background:#fffdf7;cursor:pointer;transition:.2s}
+.stage.active{background:#f0dcc1;border-color:#b27b4a;color:#6b3514;font-weight:800}
+.stage.done:before{content:"✓";color:var(--ok);font-weight:900}.stage:before{content:"○";color:var(--muted)}
+.stage.disabled{opacity:.45;cursor:not-allowed;background:#f3eadc;}
+.stage.disabled:before{content:"锁";color:var(--muted);font-size:12px;}
+.actions{margin-top:auto;display:grid;gap:8px;flex-shrink:0;}.btn{border:0;border-radius:14px;padding:11px 12px;background:var(--accent);color:white;font-weight:800;cursor:pointer;box-shadow:0 6px 16px rgba(139,75,34,.18)}
+.btn.secondary{background:#fffdf7;color:var(--accent);border:1px solid #c8a47f;box-shadow:none}.btn.green{background:var(--accent2)}.btn.ghost{background:#f8f0e2;color:var(--ink);box-shadow:none;border:1px solid var(--line)}
+.main{display:grid;grid-template-rows:auto minmax(0,1fr) auto;min-height:0;}
+.topbar{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px;background:rgba(255,255,255,.26)}
+.badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff8ec;border-radius:999px;padding:7px 10px;font-size:12px;color:var(--muted)}
+.chat{padding:18px;overflow:auto;display:flex;flex-direction:column;gap:12px;min-height:0;}.msg{max-width:82%;border-radius:18px;padding:12px 14px;line-height:1.62;font-size:14px}.msg.agent{background:#fff8ed;border:1px solid var(--line);align-self:flex-start}.msg.user{background:#e3f0ec;border:1px solid #bfd7d0;align-self:flex-end}
+.quick{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.chip{padding:7px 10px;border-radius:999px;border:1px solid #c7a37d;background:#fffdf7;color:#7c431f;font-size:12px;cursor:pointer}
+.composer{border-top:1px solid var(--line);padding:14px;display:grid;grid-template-columns:1fr auto;gap:10px;background:rgba(255,255,255,.24)}
+
+/* 右侧栏样式 */
+.right{
+  display:grid;
+  grid-template-rows:auto minmax(0,1fr);
+  min-height:0;
+}
+.tabs{display:flex;border-bottom:1px solid var(--line);background:#fff6e8}.tab{flex:1;padding:13px 8px;text-align:center;font-size:13px;font-weight:800;color:var(--muted);cursor:pointer;border-right:1px solid var(--line)}.tab.active{color:var(--accent);background:#fffdf7}
+.tab:last-child{border-right:0;}
+.draft,.eval{display:none;}
+.draft.active,.eval.active{display:block;}
+.workspace{overflow:auto;padding:16px;min-height:0;}
+
+/* 草案卡片样式，限制最大高度，内部可滚动 */
+.draft-card{
+  position:relative;
+  max-height:280px;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+.draft-card-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:8px;
+  flex-shrink:0;
+}
+.draft-card-head h3{
+  margin:0;
+  color:#6b3514;
+  font-size:15px;
+  display:inline-flex;
+  align-items:center;
+}
+.draft-card-version{
+  font-weight:400;
+  font-size:12px;
+  color:var(--muted);
+  margin-left:6px;
+}
+.mini-btn{
+  border:1px solid #c8a47f;
+  background:#fffdf7;
+  color:var(--accent);
+  border-radius:999px;
+  padding:4px 9px;
+  font-size:11px;
+  font-weight:800;
+  cursor:pointer;
+  white-space:nowrap;
+}
+.mini-btn:hover{
+  background:#f0dcc1;
+  border-color:#b27b4a;
+}
+.draft-card-editor{
+  max-height:160px;
+  min-height:80px;
+  overflow:auto;
+  flex:1;
+  border:1px dashed #c9ad8c;
+  border-radius:12px;
+  padding:10px;
+  background:#fffaf1;
+  line-height:1.65;
+  outline:none;
+}
+.editable{min-height:78px;border:1px dashed #c9ad8c;border-radius:12px;padding:10px;background:#fffaf1;line-height:1.65;outline:none;}
+.hint{font-size:12px;color:var(--muted);line-height:1.5}.score-grid{display:grid;grid-template-columns:1fr 64px;gap:8px;align-items:center}.bar{height:10px;background:#eadbc6;border-radius:999px;overflow:hidden}.bar span{display:block;height:100%;background:linear-gradient(90deg,#8b4b22,#2e6b5f)}
+
+@media(max-width:1100px){
+  body{overflow:auto;}
+  .app{grid-template-columns:1fr;height:auto;min-height:100dvh;}
+  .sidebar,.main,.right{min-height:auto;max-height:none;}
+  .sidebar{overflow:visible;}
+  .main{min-height:620px;}
+  .right{min-height:720px;}
+}
+@media(max-width:700px){
+  .agent-panel{
+    left: 14px;
+    right: 14px;
+    width: auto;
+  }
+  .layout-title{
+    display:none;
+  }
+  .draft-modal-mask{
+    padding:10px;
+  }
+  .draft-modal{
+    width:100%;
+    height:94dvh;
+    border-radius:18px;
+  }
+  .draft-modal-head{
+    padding:14px 16px;
+  }
+  .draft-modal-head h2{
+    font-size:20px;
+  }
+  .draft-modal-body{
+    padding:14px 16px;
+  }
+  .draft-modal-footer{
+    padding:12px 16px;
+  }
+}
+</style>
+</head>
+<body>
+
+<!-- 全局布局控制工具栏 -->
+<div class="layout-toolbar">
+  <div class="layout-left">
+    <div class="layout-title">禹墨教案辅助设计智能体</div>
+  </div>
+  <div class="layout-right">
+    <button class="layout-icon" onclick="toggleLeftSidebar()" title="隐藏/显示左侧栏">◧</button>
+    <button class="layout-icon" onclick="toggleRightSidebar()" title="隐藏/显示右侧栏">◨</button>
+    <button class="agent-btn" onclick="toggleAgentPanel()">@ 领域专家</button>
+  </div>
+</div>
+
+<div class="app">
+  <!-- 左侧栏 (支持双模切换：交互流程 / 历史会话) -->
+  <aside class="panel sidebar left-sidebar">
+    <div>
+      <div class="logo">禹墨 Agent</div>
+    </div>
+    <div class="field"><label>课程主题</label><input id="theme" value="设计一个简易净水装置" /></div>
+    <div class="field"><label>学段选择</label><select id="grade"><option>小学高段</option><option>初中</option><option>高中</option><option>大学通识</option></select></div>
+    <div class="field"><label>课时</label><input id="periods" value="2课时" /></div>
+    
+    <!-- 左侧一级切换按钮 -->
+    <div class="sidebar-switch">
+      <button class="sidebar-switch-btn active" id="flowSwitchBtn" onclick="switchSidebarPanel('flow')">交互流程</button>
+      <button class="sidebar-switch-btn" id="historySwitchBtn" onclick="switchSidebarPanel('history')">历史会话</button>
+    </div>
+
+    <!-- 交互流程面板 (默认激活) -->
+    <div class="sidebar-panel active" id="flowPanel">
+      <div class="stages" id="stageList"></div>
+    </div>
+
+    <!-- 历史会话面板 -->
+    <div class="sidebar-panel" id="historyPanel">
+      <div class="archive-left">
+        <h4>会话存档</h4>
+        <div class="hint">保存 LessonState、草案、聊天记录、过程评价 Trace。</div>
+        <div id="archives"></div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn" onclick="nextStage()">生成 / 进入下一阶段</button>
+      <button class="btn secondary" onclick="saveArchive()">保存会话存档</button>
+      <button class="btn green" onclick="showEvaluation()">查看量化评价</button>
+      <button class="btn ghost" onclick="exportMarkdown()">导出 Markdown</button>
+    </div>
+  </aside>
+
+  <!-- 中间对话区 -->
+  <main class="panel main center-main">
+    <div class="topbar">
+      <div><b id="stageTitle">参数采集</b><div class="hint">与主流程 Agent 对话，通过 @领域专家 获取墨子思想、考工记工艺、第一性原理和实验安全等专业反馈。</div></div>
+      <div class="badge">session: <span id="sessionId"></span></div>
+    </div>
+    <div class="chat" id="chat">
+      <div class="msg agent">请确认课程主题、学段、课时和目标。我会按照“参数采集 → 摩略万物 → 系统探索 → 测试研取 → 结构反思 → 导出” the 流程生成草案。每个阶段右侧都可以直接编辑。</div>
+    </div>
+    <div class="composer">
+      <textarea id="input" placeholder="例如：目标是让学生理解过滤原理，并能依据测试结果优化装置。输入框支持 @领域专家 进行专项提问。"></textarea>
+      <button class="btn" onclick="sendMainMessage()">发送</button>
+    </div>
+  </main>
+
+  <!-- 右侧只保留：“实时草案”与“过程评价” Tab -->
+  <aside class="panel right right-sidebar">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('draft', event)">实时草案</div>
+      <div class="tab" onclick="switchTab('eval', event)">过程评价</div>
+    </div>
+    <div class="workspace">
+      <div class="draft active" id="draft"></div>
+      <div class="eval" id="eval"></div>
+    </div>
+  </aside>
+</div>
+
+<!-- 浮动领域专家面板 -->
+<div class="agent-panel" id="agentPanel">
+  <div class="agent-panel-header">
+    <b>@ 领域专家</b>
+    <button onclick="toggleAgentPanel()">×</button>
+  </div>
+  <div class="agent-list">
+    <button onclick="selectExpertAgent('墨子')">@墨子</button>
+    <button onclick="selectExpertAgent('考工记工艺专家')">@考工记工艺专家</button>
+    <button onclick="selectExpertAgent('巨系统理论专家')">@巨系统理论专家</button>
+    <button onclick="selectExpertAgent('第一性原理专家')">@第一性原理专家</button>
+    <button onclick="selectExpertAgent('工程教育专家')">@工程教育专家</button>
+    <button onclick="selectExpertAgent('小学科学教师')">@小学科学教师</button>
+    <button onclick="selectExpertAgent('实验安全专家')">@实验安全专家</button>
+    <button onclick="selectExpertAgent('评价量规专家')">@评价量规专家</button>
+  </div>
+  <div class="agent-hint">
+    这些 @ 专家是领域专家智能体。当前原型使用前端模拟返回；真实版本由后端领域专家服务接入知识库或外部专家工作流。
+  </div>
+</div>
+
+<!-- 实时草案全屏放大编辑模态框 -->
+<div class="draft-modal-mask" id="draftModalMask" onclick="handleDraftMaskClick(event)">
+  <div class="draft-modal" role="dialog" aria-modal="true" onclick="event.stopPropagation()">
+    <div class="draft-modal-head">
+      <div>
+        <div class="draft-modal-label">实时草案放大编辑</div>
+        <h2 id="draftModalTitle">草案标题</h2>
+      </div>
+      <button class="draft-modal-close" onclick="closeDraftModal()">×</button>
+    </div>
+    <div class="draft-modal-body">
+      <div class="draft-modal-editor" id="draftModalEditor" contenteditable="true"></div>
+    </div>
+    <div class="draft-modal-footer">
+      <button class="btn ghost" onclick="closeDraftModal()">取消</button>
+      <button class="btn" onclick="saveDraftModal()">保存修改</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const stages=[['param','参数采集'],['molue','摩略万物'],['system','系统探索'],['test','测试研取'],['reflection','结构反思'],['export','导出']];
+let current=0;
+let maxUnlockedStage=0;
+const completedStages=new Set();
+let sessionId='demo-'+Math.random().toString(16).slice(2,8);
+document.getElementById('sessionId').innerText=sessionId;
+const draft={profile:'',molue:'',system:'',test:'',reflection:'',export:''};
+const traces=[];
+
+// 实时草案版本管理状态
+const draftVersions = {
+  profile: 0,
+  molue: 0,
+  system: 0,
+  test: 0,
+  reflection: 0,
+  export: 0
+};
+const draftEditBefore = {};
+
+// 布局控制状态
+let leftSidebarVisible = true;
+let rightSidebarVisible = true;
+let focusMode = false;
+let selectedExpertAgent = null;
+
+// 全屏放大编辑模态框激活 key
+let activeDraftKey = null;
+
+// 左侧侧栏切换面板
+let activeSidebarPanel = 'flow';
+
+function getDraftNames(){
+  return {
+    profile:'基本信息',
+    molue:'一、摩略万物',
+    system:'二、系统探索',
+    test:'三、测试研取',
+    reflection:'四、结构反思',
+    export:'导出稿'
+  };
+}
+
+function bumpDraftVersion(key){
+  if(!(key in draftVersions)){
+    draftVersions[key] = 0;
+  }
+  draftVersions[key] += 1;
+}
+
+function rememberDraftBeforeEdit(key, html){
+  draftEditBefore[key] = html;
+}
+
+function commitInlineDraftEdit(key, html){
+  const before = draftEditBefore[key] ?? '';
+  const after = html;
+
+  draft[key] = after;
+
+  if(before !== after){
+    bumpDraftVersion(key);
+
+    traces.push({
+      stage: stages[current][0],
+      event_type: 'draft_inline_edit',
+      section: key,
+      before_md: before,
+      after_md: after,
+      version: draftVersions[key],
+      time: new Date().toISOString()
+    });
+
+    renderDraft();
+  }
+}
+
+function openDraftModal(key){
+  activeDraftKey = key;
+  const names = getDraftNames();
+  const title = names[key] || '草案';
+
+  document.getElementById('draftModalTitle').innerText = title;
+  document.getElementById('draftModalEditor').innerHTML = draft[key] || '<span class="hint">等待主流程 Agent 生成，可直接编辑。</span>';
+  document.getElementById('draftModalMask').classList.add('active');
+
+  setTimeout(()=>{
+    document.getElementById('draftModalEditor').focus();
+  }, 0);
+}
+
+function closeDraftModal(){
+  activeDraftKey = null;
+  document.getElementById('draftModalMask').classList.remove('active');
+}
+
+function saveDraftModal(){
+  if(!activeDraftKey) return;
+  const key = activeDraftKey;
+  const editor = document.getElementById('draftModalEditor');
+  const before = draft[key] || '';
+  const after = editor.innerHTML;
+
+  draft[key] = after;
+
+  if(before !== after){
+    bumpDraftVersion(key);
+
+    traces.push({
+      stage: stages[current][0],
+      event_type: 'draft_fullscreen_edit',
+      section: key,
+      before_md: before,
+      after_md: after,
+      version: draftVersions[key],
+      time: new Date().toISOString()
+    });
+  }
+
+  closeDraftModal();
+  renderDraft();
+
+  addMsg('agent', `已保存“${getDraftNames()[key] || '草案'}”的大视图编辑内容，并同步到实时草案区。`);
+}
+
+function handleDraftMaskClick(event){
+  if(event.target.id === 'draftModalMask'){
+    closeDraftModal();
+  }
+}
+
+// 绑定 Esc 键监听
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape'){
+    const mask = document.getElementById('draftModalMask');
+    if(mask && mask.classList.contains('active')){
+      closeDraftModal();
+    }
+  }
+});
+
+function applyLayoutState(){
+  const app = document.querySelector('.app');
+  const left = document.querySelector('.left-sidebar');
+  const right = document.querySelector('.right-sidebar');
+
+  left.style.display = leftSidebarVisible && !focusMode ? '' : 'none';
+  right.style.display = rightSidebarVisible && !focusMode ? '' : 'none';
+
+  if(focusMode){
+    app.style.gridTemplateColumns = '1fr';
+    return;
+  }
+
+  if(leftSidebarVisible && rightSidebarVisible){
+    app.style.gridTemplateColumns = '260px 1fr 430px';
+  }else if(leftSidebarVisible && !rightSidebarVisible){
+    app.style.gridTemplateColumns = '260px 1fr';
+  }else if(!leftSidebarVisible && rightSidebarVisible){
+    app.style.gridTemplateColumns = '1fr 430px';
+  }else{
+    app.style.gridTemplateColumns = '1fr';
+  }
+}
+
+function toggleLeftSidebar(){
+  focusMode = false;
+  leftSidebarVisible = !leftSidebarVisible;
+  applyLayoutState();
+}
+
+function toggleRightSidebar(){
+  focusMode = false;
+  rightSidebarVisible = !rightSidebarVisible;
+  applyLayoutState();
+}
+
+function toggleFocusMode(){
+  focusMode = !focusMode;
+  applyLayoutState();
+}
+
+function toggleAgentPanel(){
+  const panel = document.getElementById('agentPanel');
+  panel.classList.toggle('active');
+}
+
+function switchSidebarPanel(panel){
+  activeSidebarPanel = panel;
+
+  document.getElementById('flowPanel').classList.toggle('active', panel === 'flow');
+  document.getElementById('historyPanel').classList.toggle('active', panel === 'history');
+
+  document.getElementById('flowSwitchBtn').classList.toggle('active', panel === 'flow');
+  document.getElementById('historySwitchBtn').classList.toggle('active', panel === 'history');
+}
+
+function selectExpertAgent(name){
+  selectedExpertAgent = name;
+  const input = document.getElementById('input');
+  const prefix = `@${name} `;
+  input.value = prefix + input.value.replace(/^@[^ ]+\s*/, '');
+  input.focus();
+
+  const panel = document.getElementById('agentPanel');
+  panel.classList.remove('active');
+
+  addMsg('agent', `已选择领域专家 Agent：<b>@${name}</b>。你可以继续输入问题，例如“请从该专家视角评价当前草案”。`);
+}
+
+function parseMentionExpert(text){
+  const match = text.match(/^@([^\s]+)\s*(.*)$/);
+  if(!match) return null;
+  return {
+    expert: match[1],
+    question: match[2] || ''
+  };
+}
+
+function fakeDomainExpertFeedback(expert, question){
+  const theme = document.getElementById('theme').value;
+  const grade = document.getElementById('grade').value;
+  const [stageKey, stageName] = stages[current];
+
+  const base = `我将以 <b>@${expert}</b> 的视角，针对“${theme} / ${grade} / 当前阶段：${stageName}”给出建议。`;
+
+  const map = {
+    '墨子': `重点检查“兼爱、利民、节用、实践验证”的教学转化。建议不要直接堆砌古文，而是把墨家思想转化为学生可操作的问题：这个设计是否有用？是否节省材料？是否能通过测试证明？`,
+    '考工记工艺专家': `重点关注材料、工序、尺度、结构与用途之间的关系。建议在草案中加入“材料为什么这样选”“工序为什么这样安排”“结构如何服务功能”等追问。`,
+    '巨系统理论专家': `重点从开放复杂巨系统视角检查：是否识别了多要素、多层级、多反馈、多约束。建议补充系统边界、外部环境、反馈回路和多目标权衡。`,
+    '第一性原理专家': `重点追问最底层问题：本课真正要解决的核心问题是什么？哪些假设不可再拆？哪些变量决定结果？建议让学生先拆解问题，再组合方案。`,
+    '工程教育专家': `重点检查是否形成工程设计闭环：问题定义、约束条件、方案构思、原型测试、证据择取、迭代优化和反思迁移。`,
+    '小学科学教师': `重点检查语言是否生活化，任务是否可观察、可记录、可安全完成。建议减少抽象理论，增加观察表、材料卡和学生表达句式。`,
+    '实验安全专家': `重点检查是否存在饮用实验水、危险材料、尖锐工具、高温高压或无防护操作。建议所有实验结果都声明“不可饮用，只用于观察与比较”。`,
+    '评价量规专家': `重点检查评价是否可量化、可观察、可反馈。建议增加学生自评表、小组互评表和教师观察指标。`
+  };
+
+  const advice = map[expert] || `建议从该专家视角检查当前草案的目标、活动、证据、安全和学段适配。`;
+
+  return `
+    ${base}<br><br>
+    <b>专业反馈：</b>${advice}<br><br>
+    <b>针对你的问题：</b>${question || '你可以继续追问我对当前草案的具体修改建议。'}<br><br>
+    <span class="hint">
+    说明：该 @ 专家是领域专家智能体。当前原型使用前端模拟返回；真实版本应由后端领域专家服务返回。专家建议只作为参考，不会自动覆盖草案，必须由教师确认后采纳。
+    </span>
+  `;
+}
+
+function renderStages(){
+  document.getElementById('stageList').innerHTML=stages.map((s,i)=>{
+    const isActive = i === current;
+    const isDone = completedStages.has(i);
+    const isLocked = i > maxUnlockedStage;
+    return `<div class="stage ${isActive?'active':''} ${isDone?'done':''} ${isLocked?'disabled':''}" onclick="tryGoStage(${i})">${s[1]}</div>`;
+  }).join('');
+  document.getElementById('stageTitle').innerText=stages[current][1];
+}
+
+function tryGoStage(i){
+  if(i > maxUnlockedStage){
+    alert('请先完成上一阶段，流程需要依次推进。');
+    return;
+  }
+  current = i;
+  renderStages();
+}
+
+function renderDraft(){
+  const names = getDraftNames();
+  document.getElementById('draft').innerHTML = Object.entries(names).map(([k,n])=>{
+    const version = draftVersions[k] || 0;
+    const versionText = version === 0 ? 'v0 未编辑' : `v${version}`;
+
+    return `
+      <div class="section draft-card">
+        <div class="draft-card-head">
+          <h3>${n} <span class="draft-card-version">${versionText}</span></h3>
+          <button class="mini-btn" onclick="openDraftModal('${k}')">放大查看</button>
+        </div>
+
+        <div class="editable draft-card-editor"
+             contenteditable="true"
+             data-draft-key="${k}"
+             onfocus="rememberDraftBeforeEdit('${k}', this.innerHTML)"
+             onblur="commitInlineDraftEdit('${k}', this.innerHTML)">
+          ${draft[k] || '<span class="hint">等待主流程 Agent 生成，可直接编辑。</span>'}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function addMsg(role, text){
+  const el=document.createElement('div');
+  el.className='msg '+(role==='user'?'user':'agent');
+  el.innerHTML=text;
+  document.getElementById('chat').appendChild(el);
+  el.scrollIntoView({behavior:'smooth',block:'end'});
+}
+
+function fakePatch(stage){
+  const theme=document.getElementById('theme').value, grade=document.getElementById('grade').value, periods=document.getElementById('periods').value;
+  if(stage==='param') return {key:'profile', text:`<b>主题：</b>${theme}<br><b>学段：</b>${grade}<br><b>课时：</b>${periods}<br><b>目标：</b>理解工程问题、观察系统要素、通过证据优化方案。`};
+  if(stage==='molue') return {key:'molue', text:`<b>真实情境：</b>展示浑浊水与看似澄清但有异味的水，引出“清澈是否等于可用”的问题。<br><b>观察任务：</b>记录颜色、沉淀、悬浮物、气味，不饮用水样。<br><b>系统边界：</b>水样、滤材、容器、水流路径、课堂安全边界。<br><b>变量/恒量：</b>滤材组合、水流速度；水样体积保持一致。`};
+  if(stage==='system') return {key:'system', text:`<b>系统要素：</b>滤料、孔隙、水流路径、杂质颗粒、容器结构。<br><b>关系抽取：</b>孔隙大小影响颗粒拦截，滤层顺序影响水流稳定。<br><b>小故问题：</b>缺少哪一层滤材会必然导致过滤失败？<br><b>大故问题：</b>哪些条件组合起来才能稳定得到更清澈的水？`};
+  if(stage==='test') return {key:'test', text:`<b>原型制作：</b>塑料瓶、棉花、细沙、鹅卵石、活性炭。<br><b>变量控制：</b>每组水量、过滤时间一致，只改变滤层顺序。<br><b>数据记录：</b>过滤前后颜色、沉淀、颗粒数量、过滤速度。<br><b>研取标准：</b>用证据选择更稳定、安全、低成本的方案。`};
+  if(stage==='reflection') return {key:'reflection', text:`<b>逢疑：</b>水变清是否说明真正安全？<br><b>遇疑：</b>为什么有的组过滤后仍然浑浊？<br><b>过疑：</b>一次测试结果是否足以说明方案最好？<br><b>迁移任务：</b>把过滤系统迁移到空气净化、雨水收集或校园节水设计。`};
+  return {key:'export', text:`<b>完整教案已合并。</b><br>可导出 Markdown / HTML / DOCX。正式使用前请教师复核安全、学段难度和典籍解释。`};
+}
+
+function sendMainMessage(){
+  const v=document.getElementById('input').value.trim(); 
+  if(!v) return; 
+
+  // 1. 判断是否 @ 专家提问，是则截断走领域专家模拟反馈逻辑 (记录到审计 traces 且不进阶段、不写草案)
+  const mention = parseMentionExpert(v);
+  if(mention){
+    addMsg('user', v);
+    const feedback = fakeDomainExpertFeedback(mention.expert, mention.question);
+    addMsg('agent', feedback);
+    traces.push({
+      stage: stages[current][0],
+      input: v,
+      event_type: 'domain_expert_query',
+      expert_type: mention.expert,
+      feedback,
+      time: new Date().toISOString()
+    });
+    document.getElementById('input').value = '';
+    return;
+  }
+
+  // 2. 走普通主流程对话，更新当前阶段并解锁下一步
+  addMsg('user',v); 
+  const [stageKey,stageName]=stages[current]; 
+  const patch=fakePatch(stageKey); 
+  draft[patch.key]=patch.text; 
+  completedStages.add(current);
+  if(current < stages.length - 1){
+    maxUnlockedStage = Math.max(maxUnlockedStage, current + 1);
+  }
+  traces.push({stage:stageKey,input:v,patch:patch.text,time:new Date().toISOString()}); 
+  addMsg('agent',`已根据你的输入更新“${stageName}”草案。右侧可直接编辑；也可以继续要求我修改，例如“降低小学难度”“增加表格”“补充安全提醒”。<div class="quick"><button class="chip" onclick="toggleAgentPanel()">向领域专家追问</button></div>`); 
+  document.getElementById('input').value=''; 
+  renderStages();
+  renderDraft();
+}
+
+function nextStage(){
+  const [stageKey,stageName]=stages[current]; 
+  const patch=fakePatch(stageKey); 
+  draft[patch.key]=patch.text; 
+  completedStages.add(current);
+  traces.push({stage:stageKey,input:'点击生成/进入下一阶段',patch:patch.text,time:new Date().toISOString()}); 
+  addMsg('agent',`已生成“${stageName}”阶段草案，并记录过程数据。`); 
+  if(current<stages.length-1) {
+    maxUnlockedStage = Math.max(maxUnlockedStage, current + 1);
+    current++;
+  }
+  renderStages(); 
+  renderDraft();
+}
+
+function switchTab(id, event){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.draft,.eval').forEach(t=>t.classList.remove('active'));
+  
+  if (event && event.currentTarget) {
+    event.currentTarget.classList.add('active');
+  } else if (event && event.target) {
+    event.target.classList.add('active');
+  } else {
+    const tabs = document.querySelectorAll('.tabs .tab');
+    if (id === 'draft') tabs[0]?.classList.add('active');
+    if (id === 'eval') tabs[1]?.classList.add('active');
+  }
+  document.getElementById(id).classList.add('active');
+}
+
+function showEvaluation(){
+  switchTab('eval'); 
+  const dims=[['系统思维',88],['实验思维',84],['证据择取',82],['反思迁移',80],['学段适配',90],['安全合规',94],['完整度',86]]; 
+  const avg=Math.round(dims.reduce((a,b)=>a+b[1],0)/dims.length); 
+  document.getElementById('eval').innerHTML=`<div class="section"><h3>综合评分：${avg}</h3><div class="hint">评分由 EvaluationTrace + 草案内容 + 评价规则生成。领域专家接入后可补充评价标准依据。</div></div>`+dims.map(d=>`<div class="section"><div class="score-grid"><b>${d[0]}</b><b>${d[1]}</b><div class="bar"><span style="width:${d[1]}%"></span></div><div class="hint">${d[1]>=90?'表现优秀':d[1]>=80?'基本达成':'需要改进'}</div></div></div>`).join('')+`<div class="section"><h3>改进建议</h3><ol><li>系统探索阶段可补充“系统边界”与“失效条件”。</li><li>测试研取阶段建议增加二次迭代记录。</li><li>正式使用前复核典籍解释与实验安全。</li></ol></div>`;
+}
+
+function saveArchive(){
+  const item = {
+    id: sessionId,
+    time: new Date().toLocaleString(),
+    theme: document.getElementById('theme').value,
+    grade: document.getElementById('grade').value,
+    periods: document.getElementById('periods').value,
+    stage: stages[current][1],
+    draft: JSON.parse(JSON.stringify(draft)),
+    draftVersions: JSON.parse(JSON.stringify(draftVersions || {})),
+    traceCount: traces.length,
+    current,
+    maxUnlockedStage,
+    completedStages: Array.from(completedStages || [])
+  };
+
+  const list = JSON.parse(localStorage.getItem('yumo_archives') || '[]');
+  list.unshift(item);
+  localStorage.setItem('yumo_archives', JSON.stringify(list.slice(0, 8)));
+
+  renderArchives();
+  switchSidebarPanel('history');
+
+  addMsg('agent', '已保存当前会话存档，可在左侧“历史会话”中查看。');
+}
+
+function renderArchives(){
+  const list = JSON.parse(localStorage.getItem('yumo_archives') || '[]');
+  const target = document.getElementById('archives');
+  if(!target) return;
+
+  target.innerHTML = list.map((a, index)=>`
+    <div class="archive-item">
+      <span>
+        <b>${a.theme || '未命名课程'}</b><br>
+        <em>${a.grade || ''} ${a.periods || ''}</em><br>
+        <em>${a.time || ''}</em>
+      </span>
+      <button class="chip" onclick="loadArchive(${index})">加载</button>
+    </div>
+  `).join('') || '<div class="hint">暂无存档</div>';
+}
+
+function loadArchive(index){
+  const list = JSON.parse(localStorage.getItem('yumo_archives') || '[]');
+  const item = list[index];
+  if(!item){
+    alert('存档不存在或已被删除。');
+    return;
+  }
+
+  document.getElementById('theme').value = item.theme || '';
+  document.getElementById('grade').value = item.grade || '小学高段';
+  document.getElementById('periods').value = item.periods || '';
+
+  Object.assign(draft, item.draft || {});
+
+  if(typeof draftVersions !== 'undefined' && item.draftVersions){
+    Object.keys(draftVersions).forEach(k=>{
+      draftVersions[k] = item.draftVersions[k] || 0;
+    });
+  }
+
+  if(typeof current !== 'undefined'){
+    current = item.current || 0;
+  }
+
+  if(typeof maxUnlockedStage !== 'undefined'){
+    maxUnlockedStage = item.maxUnlockedStage || 0;
+  }
+
+  if(typeof completedStages !== 'undefined'){
+    completedStages.clear();
+    (item.completedStages || []).forEach(i=>completedStages.add(i));
+  }
+
+  renderStages();
+  renderDraft();
+  switchSidebarPanel('flow');
+
+  addMsg('agent', `已加载历史会话：${item.theme || '未命名课程'}。`);
+}
+
+function canExport(){
+  return [0,1,2,3,4].every(i => completedStages.has(i));
+}
+
+function exportMarkdown(){
+  if(!canExport()){
+    alert('请先依次完成参数采集、摩略万物、系统探索、测试研取和结构反思。');
+    return;
+  }
+  const md=`# ${document.getElementById('theme').value}\n\n## 基本信息\n${draft.profile}\n\n## 摩略万物\n${draft.molue}\n\n## system\n${draft.system}\n\n## 测试研取\n${draft.test}\n\n## 结构反思\n${draft.reflection}`.replace(/<br>/g,'\n').replace(/<[^>]+>/g,''); 
+  const blob=new Blob([md],{type:'text/markdown;charset=utf-8'}); 
+  const url=URL.createObjectURL(blob); 
+  const a=document.createElement('a'); 
+  a.href=url; 
+  a.download='禹墨教案草案.md'; 
+  a.click(); 
+  URL.revokeObjectURL(url);
+}
+
+renderStages();
+renderDraft();
+renderArchives();
+</script>
+</body>
+</html>

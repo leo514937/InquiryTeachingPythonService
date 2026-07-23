@@ -24,6 +24,8 @@ class ContextService:
                 speaker = "教师"
             elif item.message_type == "stage_expert":
                 speaker = f"阶段专家-{item.agent_id or 'unknown'}"
+            elif item.message_type == "draft_tutor":
+                speaker = "草案修订Agent"
             else:
                 speaker = "主教学导师"
             records.append(f"{speaker}: {item.content}\n")
@@ -48,6 +50,9 @@ class ContextService:
                 role = "user"
             elif item.message_type == "stage_expert":
                 content = f"【阶段专家意见】{item.content}"
+                role = "assistant"
+            elif item.message_type == "draft_tutor":
+                content = f"【草案修订】{item.content}"
                 role = "assistant"
             else:
                 content = item.content

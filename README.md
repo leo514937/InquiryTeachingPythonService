@@ -1,44 +1,3 @@
-# AI 教师探究式教学指导 Python Service
-
-这是一个新建的、可独立运行的 Python 服务项目，放在 `YBG0915` 工作区下面，但它本身不是 `YBG0915` 里所有内容的“统一入口”。
-
-## 它和 `YBG0915` 的关系
-
-`YBG0915` 是当前这个本地工作区的总目录，里面放着多个历史项目、参考实现、数据备份和说明文档，例如：
-
-- `EduGate_20251201`：原有的教育平台后端
-- `GoMAown_20251201`：可参考的流程与专家路由实现
-- `GUI_20251201`：原有前端项目
-- `Data`：数据备份与样例资料
-- `easy(1).txt`：本次新项目的源文档
-
-`InquiryTeachingPythonService` 则是基于 `easy(1).txt` 重新新建出来的独立项目目录。它的职责是把“7 阶段探究式教学流 + RAG + SSE + 草稿导出”这条链路单独做成一个新的可运行服务。
-
-## 它和 `YBG0915` 里其他项目的区别
-
-- `YBG0915` 更像一个“项目资料仓库”或“工作区总目录”，里面装着多个彼此独立的项目、旧代码和数据。
-- `InquiryTeachingPythonService` 是一个“单独的新应用”，拥有自己的后端、前端、数据库、启动脚本和日常任务文档。
-- `YBG0915` 里的其他子目录主要承担参考、对照、迁移或历史保留的作用。
-- `InquiryTeachingPythonService` 里的代码是本次要实际运行和交付的主体，不依赖修改外层其他项目即可独立启动。
-
-## 本项目参考来源
-
-服务参考了 `GoMAown_20251201` 的主链路思想：
-
-- 会话内保存当前 `flow_name`，类似 `GoMAown` 的 `FlowName`
-- `select_flow` 切换流程后重置阶段输出与专家会话
-- 主教学导师贯穿整个教学流，并按当前阶段整合专家意见
-- 七个阶段自动绑定七个独立 Dify Agent，每个专家维护独立 `conversation_id`
-- SSE 流式输出 `stage`、`agent`、`delta`、`draft`、`done`
-- 使用 `===DRAFT_START===` / `===DRAFT_END===` 自动同步右侧草案
-- 支持回滚最近对话和导出 Markdown 教案
-
-## 本项目边界
-
-- 本项目的代码都集中在 `InquiryTeachingPythonService/` 下。
-- `EduGate_20251201`、`GoMAown_20251201`、`GUI_20251201` 等目录保留为参考实现，不需要为了运行本项目而改动。
-- 本项目自己的运行状态、数据库和前端构建产物都在 `InquiryTeachingPythonService/` 内部维护。
-
 ## 目录
 
 - `app/`：FastAPI 后端
@@ -49,7 +8,7 @@
 ## 启动
 
 ```bash
-cd C:\Users\aidis\Desktop\YBG0915\YBG0915\InquiryTeachingPythonService
+cd \InquiryTeachingPythonService
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
@@ -74,7 +33,7 @@ LLM_API_KEY=在本地 .env 中配置
 前端启动：
 
 ```bash
-cd C:\Users\aidis\Desktop\YBG0915\YBG0915\InquiryTeachingPythonService\frontend
+cd \InquiryTeachingPythonService\frontend
 npm install
 npm run dev
 ```
@@ -82,7 +41,7 @@ npm run dev
 一键初始化：
 
 ```bash
-cd C:\Users\aidis\Desktop\YBG0915\YBG0915\InquiryTeachingPythonService
+cd \InquiryTeachingPythonService
 python bootstrap.py
 ```
 
