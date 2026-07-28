@@ -182,18 +182,28 @@ class AgentArchitectureApiTests(unittest.TestCase):
             )
             self.assertEqual(valid_login.status_code, 200)
             self.assertEqual(client.get("/api/auth/me").status_code, 200)
-            cors_response = client.get(
-                "/api/auth/me",
-                headers={"Origin": "http://127.0.0.1:5173"},
-            )
-            self.assertEqual(
-                cors_response.headers.get("access-control-allow-origin"),
+            for origin in (
                 "http://127.0.0.1:5173",
-            )
-            self.assertEqual(
-                cors_response.headers.get("access-control-allow-credentials"),
-                "true",
-            )
+                "http://localhost:5173",
+                "http://152.136.39.252:5173",
+            ):
+                cors_response = client.options(
+                    "/api/auth/register",
+                    headers={
+                        "Origin": origin,
+                        "Access-Control-Request-Method": "POST",
+                        "Access-Control-Request-Headers": "content-type",
+                    },
+                )
+                self.assertEqual(cors_response.status_code, 200)
+                self.assertEqual(
+                    cors_response.headers.get("access-control-allow-origin"),
+                    origin,
+                )
+                self.assertEqual(
+                    cors_response.headers.get("access-control-allow-credentials"),
+                    "true",
+                )
         finally:
             client.close()
 

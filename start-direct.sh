@@ -8,6 +8,7 @@ LOG_DIR="$ROOT_DIR/.logs"
 BACKEND_PORT="${BACKEND_PORT:-8010}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 PUBLIC_IP="${PUBLIC_IP:-152.136.39.252}"
+FRONTEND_ORIGINS="http://127.0.0.1:$FRONTEND_PORT,http://localhost:$FRONTEND_PORT,http://$PUBLIC_IP:$FRONTEND_PORT"
 
 BACKEND_LOG="$LOG_DIR/backend.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
@@ -97,7 +98,7 @@ echo "启动后端……"
 
 (
     cd "$ROOT_DIR"
-    nohup env "FRONTEND_ORIGIN=http://$PUBLIC_IP:$FRONTEND_PORT" \
+    nohup env "FRONTEND_ORIGIN=$FRONTEND_ORIGINS" \
         "$ROOT_DIR/.venv/bin/python" \
         -m uvicorn app.main:app \
         --host 0.0.0.0 \
