@@ -8,6 +8,12 @@ export type FlowStage = {
 
 export type ChatMode = "main" | "subagent";
 
+export type AuthUser = {
+  id: string;
+  username: string;
+  chat_mode: ChatMode;
+};
+
 export type FlowInfo = {
   name: string;
   display_name: string;

@@ -1,4 +1,7 @@
 <template>
+  <AuthPanel v-if="!authLoading && !currentUser" @authenticated="handleAuthenticated" />
+  <div v-else-if="authLoading" class="auth-loading">正在验证登录状态…</div>
+  <div v-else>
   <div
     class="app-shell"
     :class="{
@@ -18,6 +21,10 @@
             <button class="ghost-button compact theme-toggle-btn" @click="toggleTheme">
               {{ themeMode === "dark" ? "浅色模式" : "深色模式" }}
             </button>
+            <div class="user-account" v-if="currentUser">
+              <span>{{ currentUser.username }}</span>
+              <button class="ghost-button compact" type="button" @click="logout">退出</button>
+            </div>
             <div class="status-pill" :class="{ live: isStreaming }">
               <span class="status-dot"></span>
               {{ isStreaming ? "SSE 流式中" : "已连接" }}
@@ -40,15 +47,7 @@
             <label>当前会话</label>
             <select :value="selectedSessionId" @change="e => selectSession((e.target as HTMLSelectElement).value)" class="input compact">
               <option v-for="item in sessions" :key="item.id" :value="item.id">
-                {{ item.topic }}
-              </option>
-            </select>
-          </div>
-          <div class="selector-row" v-if="currentSession">
-            <label>教学流程</label>
-            <select :value="selectedFlowName" @change="e => switchFlow((e.target as HTMLSelectElement).value)" class="input compact">
-              <option v-for="flow in flows" :key="flow.name" :value="flow.name">
-                {{ flow.display_name }}
+                {{ item.topic }} · {{ item.flow_display_name }}
               </option>
             </select>
           </div>
@@ -498,7 +497,7 @@
         </label>
         <label class="field">
           <span>选择教学流</span>
-          <select v-model="selectedFlowName" class="input">
+          <select v-model="newSessionFlowName" class="input">
             <option v-for="flow in flows" :key="flow.name" :value="flow.name">
               {{ flow.display_name }} ({{ flow.stage_count }}阶段)
             </option>
@@ -516,29 +515,33 @@
       <span>当前阶段草稿已保存到服务器。</span>
     </div>
   </div>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import AuthPanel from "@/components/AuthPanel.vue";
 import {
   createSession,
   deleteSession,
   applyDraftProposalActions,
   getDraftProposal,
   getChatMode,
+  getCurrentUser,
   exportSession,
   getFlows,
   getMessages,
   getSession,
   getSessions,
+  logoutUser,
   rollbackSession,
   saveDraft,
-  selectFlow,
   setDraftMode,
   setChatMode,
   streamChat,
 } from "@/api";
 import type {
+  AuthUser,
   ChatMode,
   DraftProposal,
   DraftSelection,
@@ -552,10 +555,12 @@ import type {
 import { renderMarkdown } from "@/utils/markdown";
 
 const flows = ref<FlowInfo[]>([]);
+const currentUser = ref<AuthUser | null>(null);
+const authLoading = ref(true);
 const sessions = ref<SessionListItem[]>([]);
 const currentSession = ref<SessionDetail | null>(null);
 const messages = ref<MessageItem[]>([]);
-const selectedFlowName = ref("inquiry_7_stage");
+const newSessionFlowName = ref("inquiry_7_stage");
 const selectedSessionId = ref("");
 const selectedStageId = ref("");
 const topicInput = ref("光的反射");
@@ -647,7 +652,7 @@ const stageNameMap = computed<Record<string, string>>(() => {
 
 const activeStages = computed<FlowStage[]>(() => {
   if (!currentSession.value) {
-    return flows.value.find((item) => item.name === selectedFlowName.value)?.stages || [];
+    return flows.value.find((item) => item.name === newSessionFlowName.value)?.stages || [];
   }
   return flows.value.find((item) => item.name === currentSession.value?.flow_name)?.stages || [];
 });
@@ -1092,10 +1097,38 @@ async function refreshWorkspace() {
   } catch {
     chatMode.value = "main";
   }
-  if (!selectedFlowName.value && flowList[0]) {
-    selectedFlowName.value = flowList[0].name;
+  if (!newSessionFlowName.value && flowList[0]) {
+    newSessionFlowName.value = flowList[0].name;
   }
   statusText.value = "工作区已刷新";
+}
+
+async function handleAuthenticated(user: AuthUser) {
+  currentUser.value = user;
+  await refreshWorkspace();
+  if (sessions.value[0]) {
+    await loadSession(sessions.value[0].id, true);
+  }
+}
+
+async function logout() {
+  if (isStreaming.value) {
+    return;
+  }
+  try {
+    await logoutUser();
+  } finally {
+    currentUser.value = null;
+    sessions.value = [];
+    currentSession.value = null;
+    selectedSessionId.value = "";
+    selectedStageId.value = "";
+    messages.value = [];
+    draftContent.value = "";
+    draftProposal.value = null;
+    draftStreamingContent.value = "";
+    statusText.value = "已退出登录";
+  }
 }
 
 async function loadSession(sessionId: string, loadMessages = true, preserveWarning = false) {
@@ -1105,7 +1138,6 @@ async function loadSession(sessionId: string, loadMessages = true, preserveWarni
   }
   currentSession.value = session;
   selectedSessionId.value = session.id;
-  selectedFlowName.value = session.flow_name;
   selectedStageId.value = pickStageIdFromSession(session);
   if (loadMessages) {
     messages.value = await getMessages(sessionId);
@@ -1197,7 +1229,7 @@ async function createWorkspaceSession() {
     statusText.value = "请先输入课题名称";
     return;
   }
-  const created = await createSession(topic, selectedFlowName.value);
+  const created = await createSession(topic, newSessionFlowName.value);
   sessions.value = [created, ...sessions.value.filter((item) => item.id !== created.id)];
   await loadSession(created.id, true);
   statusText.value = `已创建会话：${topic}`;
@@ -1211,18 +1243,6 @@ async function handleCreateSession() {
   }
   await createWorkspaceSession();
   showNewSessionModal.value = false;
-}
-
-async function switchFlow(flowName: string) {
-  selectedFlowName.value = flowName;
-  if (!currentSession.value) {
-    return;
-  }
-  const updated = await selectFlow(currentSession.value.id, flowName);
-  currentSession.value = updated;
-  await loadSession(updated.id, true);
-  sessions.value = [updated, ...sessions.value.filter((item) => item.id !== updated.id)];
-  statusText.value = `流程已切换为 ${updated.flow_display_name}`;
 }
 
 function inspectStage(stageId: string) {
@@ -1719,9 +1739,13 @@ onMounted(async () => {
   }
   applyTheme(themeMode.value);
   updateWorkflowStatus("idle", "准备就绪", "done");
-  await refreshWorkspace();
-  if (sessions.value[0]) {
-    await loadSession(sessions.value[0].id, true);
+  try {
+    const user = await getCurrentUser();
+    await handleAuthenticated(user);
+  } catch {
+    currentUser.value = null;
+  } finally {
+    authLoading.value = false;
   }
   syncDraftEditor();
   updateDraftCursorLine();

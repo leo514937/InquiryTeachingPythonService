@@ -15,7 +15,9 @@ pip install -r requirements.txt
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
 ```
 
-默认没有登录校验，接口可直接访问。
+首次访问前端后请先注册用户名和密码。登录后只能看到和操作当前账号创建的会话。
+
+当前 HTTP 部署地址：`http://152.136.39.252:5173/`。
 
 ## 主导师模型
 
@@ -48,6 +50,10 @@ python bootstrap.py
 ## 主要接口
 
 ```text
+POST /api/auth/register
+POST /api/auth/login
+POST /api/auth/logout
+GET  /api/auth/me
 GET  /health
 GET  /api/flows
 POST /api/sessions

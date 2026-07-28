@@ -4,6 +4,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
 from app.db.database import get_db
 from app.db.models import (
     AgentConversationModel,
@@ -13,6 +14,7 @@ from app.db.models import (
     SessionModel,
     StageOutputModel,
     RagRecordModel,
+    UserModel,
 )
 from app.schemas import (
     ConfirmStageRequest,
@@ -25,6 +27,7 @@ from app.schemas import (
 )
 from app.services.dify_agent_service import DifyAgentService
 from app.services.draft_proposal_service import DraftProposalService
+from app.services.session_access_service import get_owned_session
 from app.workflow.flows import get_flow, get_stage
 
 
@@ -97,7 +100,11 @@ def serialize_session(sess: SessionModel, db: Session) -> dict:
 
 
 @router.post("")
-def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
+def create_session(
+    payload: SessionCreate,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
     try:
         flow = get_flow(payload.flow_name)
     except KeyError as exc:
@@ -107,6 +114,7 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
     session_id = new_id("sess")
     sess = SessionModel(
         id=session_id,
+        owner_user_id=user.id,
         title=f"{payload.topic}-探究式教案",
         topic=payload.topic,
         flow_name=payload.flow_name,
@@ -134,9 +142,14 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
 
 
 @router.get("")
-def list_sessions(db: Session = Depends(get_db), limit: int = 20):
+def list_sessions(
+    db: Session = Depends(get_db),
+    limit: int = 20,
+    user: UserModel = Depends(get_current_user),
+):
     sessions = (
         db.query(SessionModel)
+        .filter(SessionModel.owner_user_id == user.id)
         .order_by(SessionModel.updated_at.desc())
         .limit(max(1, min(limit, 100)))
         .all()
@@ -162,18 +175,22 @@ def list_sessions(db: Session = Depends(get_db), limit: int = 20):
 
 
 @router.get("/{session_id}")
-def get_session(session_id: str, db: Session = Depends(get_db)):
-    sess = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+def get_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    sess = get_owned_session(db, session_id, user.id)
     return {"code": 0, "message": "success", "data": serialize_session(sess, db)}
 
 
 @router.delete("/{session_id}")
-def delete_session(session_id: str, db: Session = Depends(get_db)):
-    sess = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+def delete_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    sess = get_owned_session(db, session_id, user.id)
     
     # Cascade delete all related data to keep DB clean
     db.query(StageOutputModel).filter(StageOutputModel.session_id == session_id).delete()
@@ -189,7 +206,12 @@ def delete_session(session_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{session_id}/messages")
-def get_messages(session_id: str, db: Session = Depends(get_db)):
+def get_messages(
+    session_id: str,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    get_owned_session(db, session_id, user.id)
     messages = (
         db.query(MessageModel)
         .filter(MessageModel.session_id == session_id)
@@ -215,39 +237,27 @@ def get_messages(session_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{session_id}/select_flow")
-def select_flow(session_id: str, payload: SelectFlowRequest, db: Session = Depends(get_db)):
-    sess = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
-    try:
-        get_flow(payload.flow_name)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    db.query(StageOutputModel).filter(StageOutputModel.session_id == session_id).delete()
-    db.query(AgentConversationModel).filter(AgentConversationModel.session_id == session_id).delete()
-    db.query(ChatTurnModel).filter(ChatTurnModel.session_id == session_id).delete()
-    db.query(DraftProposalModel).filter(DraftProposalModel.session_id == session_id).delete()
-    db.query(RagRecordModel).filter(RagRecordModel.session_id == session_id).delete()
-    if payload.clear_messages:
-        db.query(MessageModel).filter(MessageModel.session_id == session_id).delete()
-
-    sess.flow_name = payload.flow_name
-    sess.current_stage_index = 0
-    sess.status = "active"
-    sess.draft_mode_enabled = 0
-    sess.updated_at = now_iso()
-    create_stage_outputs(db, session_id, payload.flow_name)
-    db.commit()
-    db.refresh(sess)
-    return {"code": 0, "message": "flow selected", "data": serialize_session(sess, db)}
+def select_flow(
+    session_id: str,
+    payload: SelectFlowRequest,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    get_owned_session(db, session_id, user.id)
+    raise HTTPException(
+        status_code=409,
+        detail="流程不可修改，请新建会话",
+    )
 
 
 @router.post("/{session_id}/confirm-stage")
-def confirm_stage(session_id: str, payload: ConfirmStageRequest, db: Session = Depends(get_db)):
-    sess = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+def confirm_stage(
+    session_id: str,
+    payload: ConfirmStageRequest,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    sess = get_owned_session(db, session_id, user.id)
     flow = get_flow(sess.flow_name)
     if sess.current_stage_index >= len(flow["stages"]):
         raise HTTPException(status_code=400, detail="Workflow already completed")
@@ -275,10 +285,13 @@ def confirm_stage(session_id: str, payload: ConfirmStageRequest, db: Session = D
 
 
 @router.put("/{session_id}/draft-mode")
-def set_draft_mode(session_id: str, payload: DraftModeRequest, db: Session = Depends(get_db)):
-    sess = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+def set_draft_mode(
+    session_id: str,
+    payload: DraftModeRequest,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    sess = get_owned_session(db, session_id, user.id)
 
     sess.draft_mode_enabled = 1 if payload.enabled else 0
     sess.updated_at = now_iso()
@@ -288,7 +301,13 @@ def set_draft_mode(session_id: str, payload: DraftModeRequest, db: Session = Dep
 
 
 @router.get("/{session_id}/draft-proposal")
-def get_draft_proposal(session_id: str, stage_id: str, db: Session = Depends(get_db)):
+def get_draft_proposal(
+    session_id: str,
+    stage_id: str,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    get_owned_session(db, session_id, user.id)
     proposal = DraftProposalService.get_active_proposal(db, session_id, stage_id)
     return {"code": 0, "message": "success", "data": DraftProposalService.serialize(proposal)}
 
@@ -299,7 +318,9 @@ def apply_draft_proposal_actions(
     proposal_id: str,
     payload: DraftProposalActionRequest,
     db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
 ):
+    get_owned_session(db, session_id, user.id)
     proposal = db.query(DraftProposalModel).filter(
         DraftProposalModel.id == proposal_id,
         DraftProposalModel.session_id == session_id,
@@ -328,10 +349,13 @@ def apply_draft_proposal_actions(
 
 
 @router.post("/{session_id}/rollback")
-def rollback(session_id: str, payload: RollbackRequest, db: Session = Depends(get_db)):
-    sess = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+def rollback(
+    session_id: str,
+    payload: RollbackRequest,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    sess = get_owned_session(db, session_id, user.id)
 
     if payload.stage_back:
         sess.current_stage_index = max(0, sess.current_stage_index - 1)
@@ -423,7 +447,9 @@ def update_stage_draft(
     stage_id: str,
     payload: DraftUpdateRequest,
     db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
 ):
+    get_owned_session(db, session_id, user.id)
     output = (
         db.query(StageOutputModel)
         .filter(StageOutputModel.session_id == session_id, StageOutputModel.stage_id == stage_id)
@@ -443,10 +469,12 @@ def update_stage_draft(
 
 
 @router.get("/{session_id}/dify_agents")
-def get_dify_agents(session_id: str, db: Session = Depends(get_db)):
-    sess = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+def get_dify_agents(
+    session_id: str,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    sess = get_owned_session(db, session_id, user.id)
 
     agents = DifyAgentService.list_agents(sess.flow_name)
     return {

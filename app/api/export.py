@@ -1,22 +1,26 @@
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
 from app.db.database import get_db
-from app.db.models import SessionModel, StageOutputModel
+from app.db.models import StageOutputModel, UserModel
 from app.services.export_service import MarkdownExportService
+from app.services.session_access_service import get_owned_session
 
 
 router = APIRouter(prefix="/api/sessions", tags=["export"])
 
 
 @router.get("/{session_id}/export")
-def export_session(session_id: str, db: Session = Depends(get_db)):
-    sess = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+def export_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    sess = get_owned_session(db, session_id, user.id)
 
     outputs = (
         db.query(StageOutputModel)

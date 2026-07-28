@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
 from app.core.sse import format_sse
 from app.db.database import SessionLocal, get_db
 from app.db.models import (
@@ -13,10 +14,11 @@ from app.db.models import (
     MessageModel,
     SessionModel,
     StageOutputModel,
+    UserModel,
 )
 from app.schemas import ChatRequest
 from app.services.context_service import ContextService
-from app.services.app_settings_service import SUBAGENT_MODE, get_global_chat_mode
+from app.services.app_settings_service import SUBAGENT_MODE, get_user_chat_mode
 from app.services.dify_agent_service import DifyAgentError, DifyAgentService
 from app.services.draft_edit_service import DraftEditService
 from app.services.draft_generate_service import DraftGenerateService
@@ -25,6 +27,7 @@ from app.services.draft_proposal_service import DraftProposalService
 from app.services.draft_target_resolver import DraftTarget, DraftTargetResolver
 from app.services.llm_service import LLMService
 from app.services.prompt_service import PromptService
+from app.services.session_access_service import get_owned_session
 from app.workflow.flows import get_flow
 
 
@@ -42,10 +45,9 @@ def new_id(prefix: str) -> str:
 def get_current_context(
     db: Session,
     session_id: str,
+    user_id: str,
 ) -> tuple[SessionModel, dict, dict, StageOutputModel | None]:
-    sess = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+    sess = get_owned_session(db, session_id, user_id)
 
     flow = get_flow(sess.flow_name)
     if sess.current_stage_index >= len(flow["stages"]):
@@ -258,10 +260,10 @@ def get_selection_text(payload: ChatRequest) -> str:
     return (payload.selection.selected_text or "").strip()
 
 
-def apply_stage_action(session_id: str, payload: ChatRequest) -> dict:
+def apply_stage_action(session_id: str, payload: ChatRequest, user_id: str) -> dict:
     db = SessionLocal()
     try:
-        sess, flow, stage, stage_output = get_current_context(db, session_id)
+        sess, flow, stage, stage_output = get_current_context(db, session_id, user_id)
         action = payload.action or "intro"
 
         if action in {"next_stage", "confirm_stage"}:
@@ -305,11 +307,16 @@ def apply_stage_action(session_id: str, payload: ChatRequest) -> dict:
 
 
 @router.post("/{session_id}/chat")
-async def chat(session_id: str, payload: ChatRequest, db: Session = Depends(get_db)):
-    sess, flow, stage, stage_output = get_current_context(db, session_id)
+async def chat(
+    session_id: str,
+    payload: ChatRequest,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    sess, flow, stage, stage_output = get_current_context(db, session_id, user.id)
 
     if payload.type == "sys_action":
-        action_result = apply_stage_action(session_id, payload)
+        action_result = apply_stage_action(session_id, payload, user.id)
 
         async def action_events():
             yield format_sse(
@@ -352,7 +359,7 @@ async def chat(session_id: str, payload: ChatRequest, db: Session = Depends(get_
     stage_agent_id = stage["agent_id"]
     stage_agent = DifyAgentService.find_agent(stage_agent_id, sess.flow_name)
     conversation_id = get_agent_conversation_id(db, session_id, stage_agent_id)
-    chat_mode = get_global_chat_mode(db)
+    chat_mode = get_user_chat_mode(user)
 
     session_snapshot = {
         "session_id": sess.id,

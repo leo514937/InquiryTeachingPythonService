@@ -37,6 +37,7 @@ def init_database() -> None:
         """
         CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
+            owner_user_id TEXT,
             title TEXT,
             topic TEXT NOT NULL,
             flow_name TEXT NOT NULL DEFAULT 'inquiry_7_stage',
@@ -44,6 +45,24 @@ def init_database() -> None:
             status TEXT DEFAULT 'active',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            chat_mode TEXT NOT NULL DEFAULT 'main',
+            created_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+            id TEXT PRIMARY KEY,
+            token_hash TEXT NOT NULL UNIQUE,
+            user_id TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
         )
         """,
         """
@@ -121,6 +140,15 @@ def init_database() -> None:
         }
         if "expert_message_id" not in chat_turn_columns:
             conn.execute("ALTER TABLE chat_turns ADD COLUMN expert_message_id TEXT")
+        session_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
+        }
+        if "owner_user_id" not in session_columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN owner_user_id TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_sessions_owner_user_id "
+            "ON sessions (owner_user_id)"
+        )
         conn.commit()
 
 

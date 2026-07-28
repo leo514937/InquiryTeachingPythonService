@@ -7,6 +7,7 @@ class SessionModel(Base):
     __tablename__ = "sessions"
 
     id = Column(String, primary_key=True)
+    owner_user_id = Column(String, nullable=True, index=True)
     title = Column(String)
     topic = Column(String, nullable=False)
     flow_name = Column(String, nullable=False, default="inquiry_7_stage")
@@ -23,6 +24,26 @@ class AppSettingModel(Base):
     key = Column(String, primary_key=True)
     value = Column(Text, nullable=False, default="")
     updated_at = Column(String, nullable=False)
+
+
+class UserModel(Base):
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True)
+    username = Column(String, nullable=False, unique=True, index=True)
+    password_hash = Column(Text, nullable=False)
+    chat_mode = Column(String, nullable=False, default="main")
+    created_at = Column(String, nullable=False)
+
+
+class AuthSessionModel(Base):
+    __tablename__ = "auth_sessions"
+
+    id = Column(String, primary_key=True)
+    token_hash = Column(String, nullable=False, unique=True, index=True)
+    user_id = Column(String, nullable=False, index=True)
+    expires_at = Column(String, nullable=False, index=True)
+    created_at = Column(String, nullable=False)
 
 
 class MessageModel(Base):
