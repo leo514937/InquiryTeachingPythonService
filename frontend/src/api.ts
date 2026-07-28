@@ -7,6 +7,7 @@ import type {
   FlowInfo,
   MessageItem,
   SessionDetail,
+  SessionFileItem,
   SessionListItem,
 } from "@/types";
 
@@ -24,8 +25,15 @@ async function readJson<T>(input: RequestInfo | URL, init?: RequestInit): Promis
     credentials: "include",
   });
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || response.statusText);
+    const body = await response.text();
+    let detail = body || response.statusText;
+    try {
+      const parsed = JSON.parse(body);
+      detail = parsed.detail || parsed.message || detail;
+    } catch {
+      // Keep the original response body when it is not JSON.
+    }
+    throw new Error(detail);
   }
   return response.json() as Promise<T>;
 }
@@ -68,6 +76,33 @@ export async function getMessages(sessionId: string): Promise<MessageItem[]> {
 export async function getDifyAgents(sessionId: string): Promise<DifyAgentItem[]> {
   const payload = await readJson<ApiEnvelope<DifyAgentItem[]>>(`${API_BASE}/api/sessions/${sessionId}/dify_agents`);
   return payload.data || [];
+}
+
+export async function getSessionFiles(sessionId: string): Promise<SessionFileItem[]> {
+  const payload = await readJson<ApiEnvelope<SessionFileItem[]>>(
+    `${API_BASE}/api/sessions/${sessionId}/files`,
+  );
+  return payload.data || [];
+}
+
+export async function uploadSessionFile(sessionId: string, file: File): Promise<SessionFileItem> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const payload = await readJson<ApiEnvelope<SessionFileItem>>(
+    `${API_BASE}/api/sessions/${sessionId}/files`,
+    {
+      method: "POST",
+      body: formData,
+    },
+  );
+  return payload.data;
+}
+
+export async function deleteSessionFile(sessionId: string, fileId: string): Promise<void> {
+  await readJson<ApiEnvelope<null>>(
+    `${API_BASE}/api/sessions/${sessionId}/files/${fileId}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function registerUser(username: string, password: string): Promise<AuthUser> {
@@ -184,11 +219,13 @@ type StreamHandlers = {
   proposal?: (data: any) => void | Promise<void>;
   status?: (data: any) => void | Promise<void>;
   warning?: (data: any) => void | Promise<void>;
+  interrupted?: (data: any) => void | Promise<void>;
   done?: (data: any) => void | Promise<void>;
 };
 
 export type StreamChatPayload = {
   type: "chat" | "sys_action";
+  request_id?: string;
   message?: string;
   action?: "next_stage" | "prev_stage" | "intro" | "confirm_stage";
   final_content?: string;
@@ -200,12 +237,14 @@ export async function streamChat(
   sessionId: string,
   payload: StreamChatPayload,
   handlers: StreamHandlers,
+  signal?: AbortSignal,
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/api/sessions/${sessionId}/chat`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal,
   });
 
   if (!response.ok || !response.body) {
@@ -256,6 +295,14 @@ export async function streamChat(
       await dispatch(eventName, dataLines.join("\n"));
     }
   }
+}
+
+export async function cancelChat(sessionId: string, requestId: string): Promise<boolean> {
+  const payload = await readJson<ApiEnvelope<{ cancelled: boolean }>>(
+    `${API_BASE}/api/sessions/${sessionId}/chat/${encodeURIComponent(requestId)}/cancel`,
+    { method: "POST" },
+  );
+  return Boolean(payload.data?.cancelled);
 }
 
 export function buildFileDownloadUrl(sessionName: string): string {

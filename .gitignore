@@ -3,6 +3,8 @@
 __pycache__/
 *.pyc
 *.db
+*.db-shm
+*.db-wal
 *.log
 *.tsbuildinfo
 .pytest_cache/
@@ -10,5 +12,6 @@ __pycache__/
 .mypy_cache/
 .coverage
 outputs/
+data/uploads/
 frontend/node_modules/
 frontend/dist/

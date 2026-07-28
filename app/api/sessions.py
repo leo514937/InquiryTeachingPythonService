@@ -28,6 +28,7 @@ from app.schemas import (
 from app.services.dify_agent_service import DifyAgentService
 from app.services.draft_proposal_service import DraftProposalService
 from app.services.session_access_service import get_owned_session
+from app.services.session_file_service import SessionFileService
 from app.workflow.flows import get_flow, get_stage
 
 
@@ -199,6 +200,7 @@ def delete_session(
     db.query(ChatTurnModel).filter(ChatTurnModel.session_id == session_id).delete()
     db.query(DraftProposalModel).filter(DraftProposalModel.session_id == session_id).delete()
     db.query(RagRecordModel).filter(RagRecordModel.session_id == session_id).delete()
+    SessionFileService.delete_session_files(db, session_id)
     
     db.delete(sess)
     db.commit()

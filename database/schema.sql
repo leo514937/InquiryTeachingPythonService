@@ -50,6 +50,24 @@ CREATE TABLE IF NOT EXISTS messages (
         FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
 );
 
+-- Uploaded reference files scoped to one teaching session.
+CREATE TABLE IF NOT EXISTS session_files (
+    id              TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    extension       TEXT NOT NULL,
+    mime_type       TEXT NOT NULL DEFAULT '',
+    size_bytes      INTEGER NOT NULL DEFAULT 0,
+    extracted_text  TEXT NOT NULL DEFAULT '',
+    extracted_chars INTEGER NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'processing',
+    error_message   TEXT NOT NULL DEFAULT '',
+    stored_path     TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    CONSTRAINT fk_session_files_session
+        FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
+);
+
 -- RAG request, retrieved context, and serialized source metadata.
 CREATE TABLE IF NOT EXISTS rag_records (
     id          TEXT PRIMARY KEY,
@@ -111,6 +129,9 @@ CREATE INDEX IF NOT EXISTS ix_messages_stage_id
     ON messages (stage_id);
 CREATE INDEX IF NOT EXISTS ix_messages_session_created
     ON messages (session_id, created_at);
+
+CREATE INDEX IF NOT EXISTS ix_session_files_session_id
+    ON session_files (session_id);
 
 CREATE INDEX IF NOT EXISTS ix_rag_records_session_id
     ON rag_records (session_id);

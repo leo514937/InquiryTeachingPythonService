@@ -1,3 +1,4 @@
+import asyncio
 import datetime as dt
 import uuid
 
@@ -19,6 +20,7 @@ from app.db.models import (
 from app.schemas import ChatRequest
 from app.services.context_service import ContextService
 from app.services.app_settings_service import SUBAGENT_MODE, get_user_chat_mode
+from app.services.chat_interrupt_service import ChatInterrupted, chat_interruptions
 from app.services.dify_agent_service import DifyAgentError, DifyAgentService
 from app.services.draft_edit_service import DraftEditService
 from app.services.draft_generate_service import DraftGenerateService
@@ -314,37 +316,53 @@ async def chat(
     user: UserModel = Depends(get_current_user),
 ):
     sess, flow, stage, stage_output = get_current_context(db, session_id, user.id)
+    request_id = payload.request_id or new_id("chat")
 
     if payload.type == "sys_action":
-        action_result = apply_stage_action(session_id, payload, user.id)
+        try:
+            chat_interruptions.register(request_id, session_id, user.id)
+            action_result = apply_stage_action(session_id, payload, user.id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
         async def action_events():
-            yield format_sse(
-                "stage",
-                {
-                    "stage": action_result["stage"],
-                    "completed": action_result["completed"],
-                },
-            )
-            text = action_result["message"]
-            if text:
+            chat_interruptions.bind_current_task(request_id)
+            try:
+                if chat_interruptions.is_cancelled(request_id):
+                    raise ChatInterrupted()
                 yield format_sse(
-                    "delta",
+                    "stage",
                     {
-                        "text": text,
-                        "agent_id": "main_agent",
-                        "agent_name": "主教学导师",
-                        "message_type": "main_tutor",
+                        "stage": action_result["stage"],
+                        "completed": action_result["completed"],
                     },
                 )
-            yield format_sse(
-                "done",
-                {
-                    "message_id": None,
-                    "completed": action_result["completed"],
-                    "degraded": False,
-                },
-            )
+                text = action_result["message"]
+                if text:
+                    yield format_sse(
+                        "delta",
+                        {
+                            "text": text,
+                            "agent_id": "main_agent",
+                            "agent_name": "主教学导师",
+                            "message_type": "main_tutor",
+                        },
+                    )
+                yield format_sse(
+                    "done",
+                    {
+                        "message_id": None,
+                        "completed": action_result["completed"],
+                        "degraded": False,
+                        "request_id": request_id,
+                    },
+                )
+            except ChatInterrupted:
+                yield format_sse("interrupted", {"request_id": request_id})
+            except asyncio.CancelledError:
+                raise
+            finally:
+                chat_interruptions.unregister(request_id)
 
         return StreamingResponse(action_events(), media_type="text/event-stream")
 
@@ -375,7 +393,16 @@ async def chat(
         "selection_text": get_selection_text(payload),
     }
 
-    async def chat_events():
+    try:
+        chat_interruptions.register(request_id, session_id, user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    async def ensure_chat_active() -> None:
+        if chat_interruptions.is_cancelled(request_id):
+            raise ChatInterrupted()
+
+    async def chat_body():
         expert_text = ""
         main_text = ""
         draft_text = ""
@@ -391,6 +418,7 @@ async def chat(
             "generate" if not session_snapshot["current_draft"].strip() else "edit"
         )
 
+        await ensure_chat_active()
         yield format_sse(
             "stage",
             {
@@ -438,6 +466,7 @@ async def chat(
                         user_message=payload.message,
                         llm_history=session_snapshot["llm_history"],
                     ):
+                        await ensure_chat_active()
                         draft_text = candidate_content
                         yield format_sse(
                             "draft",
@@ -457,6 +486,7 @@ async def chat(
                             final_draft = draft_text
                             draft_status_text = "右侧草案已经整理好了，已直接写入草案。"
                         else:
+                            await ensure_chat_active()
                             proposal = DraftProposalService.create_proposal(
                                 db,
                                 session_id=session_id,
@@ -471,6 +501,7 @@ async def chat(
                                 },
                             )
                             if proposal:
+                                await ensure_chat_active()
                                 db.commit()
                                 db.refresh(proposal)
                                 proposal_payload = DraftProposalService.serialize(proposal)
@@ -542,6 +573,7 @@ async def chat(
                             llm_history=session_snapshot["llm_history"],
                             target=target,
                         ):
+                            await ensure_chat_active()
                             draft_text = candidate_content
                             yield format_sse(
                                 "draft",
@@ -553,6 +585,7 @@ async def chat(
                                     "message_type": "draft_tutor",
                                 },
                             )
+                        await ensure_chat_active()
                         proposal = DraftProposalService.create_proposal(
                             db,
                             session_id=session_id,
@@ -567,6 +600,7 @@ async def chat(
                             },
                         )
                         if proposal:
+                            await ensure_chat_active()
                             db.commit()
                             db.refresh(proposal)
                             proposal_payload = DraftProposalService.serialize(proposal)
@@ -578,6 +612,8 @@ async def chat(
                         else:
                             proposal_kind = "edit"
                             draft_status_text = "我刚刚对照检查过，右侧草案暂时不需要调整。"
+            except ChatInterrupted:
+                raise
             except Exception:
                 draft_failed = True
                 draft_status_text = "这次草案整理没有成功，右侧仍保留原草案，我们可以换个说法再试。"
@@ -623,6 +659,7 @@ async def chat(
                 current_draft=session_snapshot["current_draft"],
                 selection_text=session_snapshot["selection_text"],
             ):
+                await ensure_chat_active()
                 text = item.get("text", "")
                 next_conversation_id = item.get("conversation_id") or next_conversation_id
                 if not text:
@@ -637,6 +674,7 @@ async def chat(
                         "message_type": "stage_expert",
                     },
                 )
+            await ensure_chat_active()
             upsert_agent_conversation_id(session_id, stage_agent.id, next_conversation_id)
         else:
             yield format_sse(
@@ -672,6 +710,7 @@ async def chat(
                 payload.message,
                 response_kind="guide",
             ):
+                await ensure_chat_active()
                 main_text += text
                 yield format_sse(
                     "delta",
@@ -691,6 +730,7 @@ async def chat(
                 },
             )
 
+        await ensure_chat_active()
         message_ids = save_chat_result(
             session_id=session_id,
             stage_id=stage["id"],
@@ -720,8 +760,21 @@ async def chat(
                 "warning": None,
                 "chat_mode": chat_mode,
                 "draft_mode_enabled": session_snapshot["draft_mode_enabled"],
+                "request_id": request_id,
             },
         )
+
+    async def chat_events():
+        chat_interruptions.bind_current_task(request_id)
+        try:
+            async for event in chat_body():
+                yield event
+        except ChatInterrupted:
+            yield format_sse("interrupted", {"request_id": request_id})
+        except asyncio.CancelledError:
+            raise
+        finally:
+            chat_interruptions.unregister(request_id)
 
     return StreamingResponse(
         chat_events(),
@@ -731,3 +784,19 @@ async def chat(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/{session_id}/chat/{request_id}/cancel")
+def cancel_chat(
+    session_id: str,
+    request_id: str,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    get_owned_session(db, session_id, user.id)
+    cancelled = chat_interruptions.cancel(request_id, session_id, user.id)
+    return {
+        "code": 0,
+        "message": "chat interrupted" if cancelled else "chat request is no longer active",
+        "data": {"request_id": request_id, "cancelled": cancelled},
+    }

@@ -59,6 +59,23 @@ class MessageModel(Base):
     created_at = Column(String, nullable=False)
 
 
+class SessionFileModel(Base):
+    __tablename__ = "session_files"
+
+    id = Column(String, primary_key=True)
+    session_id = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    extension = Column(String, nullable=False)
+    mime_type = Column(String, default="")
+    size_bytes = Column(Integer, default=0)
+    extracted_text = Column(Text, default="")
+    extracted_chars = Column(Integer, default=0)
+    status = Column(String, nullable=False, default="processing")
+    error_message = Column(Text, default="")
+    stored_path = Column(Text, nullable=False)
+    created_at = Column(String, nullable=False)
+
+
 class ChatTurnModel(Base):
     __tablename__ = "chat_turns"
 

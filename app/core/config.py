@@ -29,6 +29,12 @@ class Settings:
         "DATABASE_URL",
         f"sqlite:///{(BASE_DIR / 'app.db').as_posix()}",
     )
+    upload_dir: Path = Path(
+        os.getenv("UPLOAD_DIR", str(BASE_DIR / "data" / "uploads"))
+    ).resolve()
+    upload_max_file_bytes: int = int(os.getenv("UPLOAD_MAX_FILE_BYTES", str(10 * 1024 * 1024)))
+    upload_max_files_per_session: int = int(os.getenv("UPLOAD_MAX_FILES_PER_SESSION", "10"))
+    upload_max_total_chars: int = int(os.getenv("UPLOAD_MAX_TOTAL_CHARS", "50000"))
 
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_api_base: str = os.getenv("LLM_API_BASE", "https://api.openai.com/v1")

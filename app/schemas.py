@@ -41,6 +41,7 @@ class DraftSelection(BaseModel):
 
 class ChatRequest(BaseModel):
     type: Literal["chat", "sys_action"] = "chat"
+    request_id: str | None = Field(default=None, min_length=1, max_length=128)
     message: str = ""
     action: Literal["next_stage", "prev_stage", "intro", "confirm_stage"] | None = None
     final_content: str | None = None

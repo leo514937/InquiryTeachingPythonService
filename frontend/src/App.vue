@@ -45,7 +45,7 @@
         <div class="session-selector-panel">
           <div class="selector-row">
             <label>当前会话</label>
-            <select :value="selectedSessionId" @change="e => selectSession((e.target as HTMLSelectElement).value)" class="input compact">
+            <select :value="selectedSessionId" :disabled="isUploadingFile" @change="e => selectSession((e.target as HTMLSelectElement).value)" class="input compact">
               <option v-for="item in sessions" :key="item.id" :value="item.id">
                 {{ item.topic }} · {{ item.flow_display_name }}
               </option>
@@ -202,6 +202,9 @@
               </div>
             </div>
             <div class="message-content markdown-content" v-html="renderMarkdown(message.content)"></div>
+            <div v-if="message.interrupted" class="message-interrupted" role="status">
+              ⏹ 已停止生成
+            </div>
           </article>
 
           <div v-if="!messages.length" class="empty-state">
@@ -217,25 +220,84 @@
                 <strong>×</strong>
               </button>
             </div>
-            <textarea
-              ref="chatInputRef"
-              v-model="chatInput"
-              class="chat-input"
-              rows="3"
-              placeholder="输入课堂切入点、问题追问、实验思路或阶段补充内容；可先从右侧添加 @行号引用。Enter 发送，Shift+Enter 换行"
-              @keydown="handleComposerKeydown"
-            />
-            <div class="composer-actions">
-              <button
-                class="primary-button send-btn"
-                :disabled="isStreaming || (isDraftMode && !!draftContent.trim() && !attachedChatSelection?.selected_text?.trim())"
-                @click="sendChat"
-              >
-                {{ isDraftMode ? draftPrimaryActionLabel : "发送对话" }}
-              </button>
-              <button class="ghost-button compact draft-mode-btn" :class="{ active: isDraftMode }" :disabled="isStreaming || !currentSession" @click="toggleDraftMode">
-                {{ isDraftMode ? "退出草案模式" : "进入草案模式" }}
-              </button>
+            <div v-if="sessionFiles.length" class="composer-reference-list" aria-label="已上传参考资料">
+              <div v-for="item in sessionFiles" :key="item.id" class="composer-reference-card">
+                <div class="composer-reference-icon" aria-hidden="true">
+                  <FileText :size="22" />
+                </div>
+                <div class="reference-file-copy">
+                  <span :title="item.name">{{ item.name }}</span>
+                  <small :class="`status-${item.status}`">
+                    {{ fileStatusLabel(item) }}
+                  </small>
+                  <small v-if="item.error_message" class="reference-file-reason" :title="item.error_message">
+                    {{ item.error_message }}
+                  </small>
+                </div>
+                <button
+                  class="reference-delete-button"
+                  type="button"
+                  :title="`删除 ${item.name}`"
+                  :disabled="isStreaming || deletingFileIds.includes(item.id)"
+                  @click="removeReferenceFile(item)"
+                >
+                  <LoaderCircle v-if="deletingFileIds.includes(item.id)" class="spin-icon" :size="14" />
+                  <X v-else :size="18" />
+                </button>
+              </div>
+            </div>
+            <div class="composer-input-row">
+              <textarea
+                ref="chatInputRef"
+                v-model="chatInput"
+                class="chat-input"
+                rows="3"
+                wrap="soft"
+                placeholder="输入课堂切入点、问题追问、实验思路或阶段补充内容；可先从右侧添加 @行号引用。Enter 发送，Shift+Enter 换行"
+                @input="resizeChatInput"
+                @keydown="handleComposerKeydown"
+              />
+            </div>
+            <div class="composer-toolbar">
+              <div class="composer-toolbar-left">
+                <button
+                  class="icon-button composer-upload-button"
+                  type="button"
+                  aria-label="上传参考资料"
+                  title="上传 PDF、DOCX、TXT 或 MD 参考资料"
+                  :disabled="isStreaming || isUploadingFile || sessionFiles.length >= 10 || !currentSession"
+                  @click="openFilePicker"
+                >
+                  <LoaderCircle v-if="isUploadingFile" class="spin-icon" :size="18" />
+                  <Paperclip v-else :size="18" />
+                  <span v-if="sessionFiles.length" class="composer-upload-count">{{ sessionFiles.length }}</span>
+                </button>
+                <input
+                  ref="fileInputRef"
+                  class="visually-hidden"
+                  type="file"
+                  multiple
+                  accept=".pdf,.docx,.txt,.md"
+                  @change="handleFileSelection"
+                />
+                <p v-if="fileOperationError" class="composer-file-error" role="status" :title="fileOperationError">
+                  {{ fileOperationError }}
+                </p>
+              </div>
+              <div class="composer-actions">
+                <button class="ghost-button compact draft-mode-btn" :class="{ active: isDraftMode }" :disabled="isStreaming || !currentSession" @click="toggleDraftMode">
+                  {{ isDraftMode ? "退出草案模式" : "进入草案模式" }}
+                </button>
+                <button
+                  class="primary-button send-btn"
+                  :class="{ 'stop-btn': isStreaming && activeStreamRequestId }"
+                  :disabled="isStreaming ? !activeStreamRequestId : (isDraftMode && !!draftContent.trim() && !attachedChatSelection?.selected_text?.trim())"
+                  :aria-label="isStreaming && activeStreamRequestId ? '停止生成' : '发送对话'"
+                  @click="isStreaming && activeStreamRequestId ? interruptChat() : sendChat()"
+                >
+                  {{ isStreaming && activeStreamRequestId ? "停止生成" : isDraftMode ? draftPrimaryActionLabel : "发送对话" }}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -521,10 +583,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import AuthPanel from "@/components/AuthPanel.vue";
+import { FileText, LoaderCircle, Paperclip, X } from "lucide-vue-next";
 import {
   createSession,
   deleteSession,
+  deleteSessionFile,
   applyDraftProposalActions,
+  cancelChat,
   getDraftProposal,
   getChatMode,
   getCurrentUser,
@@ -532,6 +597,7 @@ import {
   getFlows,
   getMessages,
   getSession,
+  getSessionFiles,
   getSessions,
   logoutUser,
   rollbackSession,
@@ -539,6 +605,7 @@ import {
   setDraftMode,
   setChatMode,
   streamChat,
+  uploadSessionFile,
 } from "@/api";
 import type {
   AuthUser,
@@ -550,6 +617,7 @@ import type {
   FlowStage,
   MessageItem,
   SessionDetail,
+  SessionFileItem,
   SessionListItem,
 } from "@/types";
 import { renderMarkdown } from "@/utils/markdown";
@@ -561,6 +629,7 @@ const sessions = ref<SessionListItem[]>([]);
 const currentSession = ref<SessionDetail | null>(null);
 const messages = ref<MessageItem[]>([]);
 const newSessionFlowName = ref("inquiry_7_stage");
+const sessionFiles = ref<SessionFileItem[]>([]);
 const selectedSessionId = ref("");
 const selectedStageId = ref("");
 const topicInput = ref("光的反射");
@@ -571,6 +640,9 @@ const draftStreamingContent = ref("");
 const statusText = ref("准备就绪");
 const streamWarning = ref("");
 const isStreaming = ref(false);
+const activeStreamRequestId = ref<string | null>(null);
+const activeStreamAbortController = ref<AbortController | null>(null);
+const interruptRequested = ref(false);
 const chatMode = ref<ChatMode>("main");
 const themeMode = ref<"dark" | "light">("dark");
 const saveSuccessVisible = ref(false);
@@ -580,6 +652,7 @@ const leftSidebarVisible = ref(true);
 const rightSidebarVisible = ref(true);
 const feedRef = ref<HTMLElement | null>(null);
 const chatInputRef = ref<HTMLTextAreaElement | null>(null);
+const fileInputRef = ref<HTMLInputElement | null>(null);
 const draftEditorRef = ref<HTMLTextAreaElement | null>(null);
 const reviewPreviewRef = ref<HTMLElement | null>(null);
 const showDraftReviewOverlay = ref(false);
@@ -589,6 +662,9 @@ const draftWorkbenchState = ref<"idle" | "generate_streaming" | "edit_streaming"
 const lastDraftSelection = ref<DraftSelection | null>(null);
 const attachedChatSelection = ref<DraftSelection | null>(null);
 const attachedChatSelectionLabel = ref("");
+const isUploadingFile = ref(false);
+const deletingFileIds = ref<string[]>([]);
+const fileOperationError = ref("");
 const currentDraftCursorLine = ref(1);
 const draftEditorScrollTop = ref(0);
 const draftEditorMeasureWidth = ref(0);
@@ -1132,11 +1208,16 @@ async function logout() {
 }
 
 async function loadSession(sessionId: string, loadMessages = true, preserveWarning = false) {
-  const session = await getSession(sessionId);
+  const [session, files] = await Promise.all([
+    getSession(sessionId),
+    getSessionFiles(sessionId),
+  ]);
   if (!preserveWarning) {
     streamWarning.value = "";
   }
   currentSession.value = session;
+  sessionFiles.value = files;
+  fileOperationError.value = "";
   selectedSessionId.value = session.id;
   selectedStageId.value = pickStageIdFromSession(session);
   if (loadMessages) {
@@ -1154,6 +1235,82 @@ async function loadSession(sessionId: string, loadMessages = true, preserveWarni
 
 async function selectSession(sessionId: string) {
   await loadSession(sessionId, true);
+}
+
+function openFilePicker() {
+  if (isStreaming.value || isUploadingFile.value || !currentSession.value) {
+    return;
+  }
+  fileInputRef.value?.click();
+}
+
+function fileStatusLabel(item: SessionFileItem): string {
+  if (item.status === "processing") return "正在解析";
+  if (item.status === "failed") return "解析失败";
+  return "文档";
+}
+
+async function handleFileSelection(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const selectedFiles = Array.from(input.files || []);
+  input.value = "";
+  if (!currentSession.value || !selectedFiles.length || isStreaming.value) {
+    return;
+  }
+
+  isUploadingFile.value = true;
+  fileOperationError.value = "";
+  const sessionId = currentSession.value.id;
+  const errors: string[] = [];
+  try {
+    for (const selectedFile of selectedFiles) {
+      try {
+        const uploaded = await uploadSessionFile(sessionId, selectedFile);
+        if (currentSession.value?.id === sessionId) {
+          sessionFiles.value = [
+            ...sessionFiles.value.filter((item) => item.id !== uploaded.id),
+            uploaded,
+          ];
+        }
+        if (uploaded.status === "failed") {
+          errors.push(`${uploaded.name}：${uploaded.error_message || "解析失败"}`);
+        }
+      } catch (error: any) {
+        errors.push(`${selectedFile.name}：${error.message || error}`);
+      }
+    }
+  } finally {
+    isUploadingFile.value = false;
+  }
+  fileOperationError.value = errors.join("；");
+  statusText.value = errors.length
+    ? `资料上传完成，${errors.length} 个文件未能使用`
+    : `已上传 ${selectedFiles.length} 个参考资料`;
+}
+
+async function removeReferenceFile(item: SessionFileItem) {
+  if (!currentSession.value || isStreaming.value) {
+    return;
+  }
+  if (!confirm(`确认删除参考资料《${item.name}》吗？`)) {
+    return;
+  }
+
+  const sessionId = currentSession.value.id;
+  deletingFileIds.value = [...deletingFileIds.value, item.id];
+  fileOperationError.value = "";
+  try {
+    await deleteSessionFile(sessionId, item.id);
+    if (currentSession.value?.id === sessionId) {
+      sessionFiles.value = sessionFiles.value.filter((file) => file.id !== item.id);
+    }
+    statusText.value = `已删除参考资料：${item.name}`;
+  } catch (error: any) {
+    fileOperationError.value = error.message || String(error);
+    statusText.value = `删除资料失败：${fileOperationError.value}`;
+  } finally {
+    deletingFileIds.value = deletingFileIds.value.filter((id) => id !== item.id);
+  }
 }
 
 async function toggleChatMode() {
@@ -1210,6 +1367,8 @@ async function handleDeleteSession() {
       currentSession.value = null;
       selectedSessionId.value = "";
       messages.value = [];
+      sessionFiles.value = [];
+      fileOperationError.value = "";
       clearAttachedChatSelection(false);
       draftContent.value = "";
       draftProposal.value = null;
@@ -1365,6 +1524,27 @@ async function applyAllDraftProposalActions(action: "accept" | "reject") {
   await refreshDraftProposal();
 }
 
+function createStreamRequestId() {
+  const randomId = globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
+  return `chat_${Date.now()}_${randomId}`;
+}
+
+async function interruptChat() {
+  if (!isStreaming.value || !currentSession.value || !activeStreamRequestId.value) {
+    return;
+  }
+  const sessionId = currentSession.value.id;
+  const requestId = activeStreamRequestId.value;
+  interruptRequested.value = true;
+  statusText.value = "正在停止生成，本轮内容不会保存...";
+  activeStreamAbortController.value?.abort();
+  try {
+    await cancelChat(sessionId, requestId);
+  } catch {
+    // The browser abort itself also closes the SSE connection and lets the backend clean up.
+  }
+}
+
 async function sendChat() {
   if (isStreaming.value) {
     return;
@@ -1394,6 +1574,8 @@ async function sendChat() {
   }
 
   const sessionId = currentSession.value.id;
+  const requestId = createStreamRequestId();
+  const abortController = new AbortController();
   const stageId = currentSession.value.current_stage?.id || "";
   const userMessage: MessageItem = {
     stage_id: stageId,
@@ -1404,7 +1586,11 @@ async function sendChat() {
   };
   messages.value = [...messages.value, userMessage];
   chatInput.value = "";
+  void nextTick(resizeChatInput);
   isStreaming.value = true;
+  activeStreamRequestId.value = requestId;
+  activeStreamAbortController.value = abortController;
+  interruptRequested.value = false;
   streamWarning.value = "";
   draftStreamingContent.value = "";
   if (requestMode === "draft") {
@@ -1426,6 +1612,18 @@ async function sendChat() {
   updateWorkflowStatus(requestMode === "draft" ? "draft" : requestMode === "subagent" ? "expert" : "guide", statusText.value, "start");
   const streamMessages = new Map<string, MessageItem>();
   const placeholderTexts = new Map<string, string>();
+  const markStreamMessagesInterrupted = () => {
+    let changed = false;
+    for (const message of streamMessages.values()) {
+      if (message.role === "assistant" && !message.interrupted) {
+        message.interrupted = true;
+        changed = true;
+      }
+    }
+    if (changed) {
+      messages.value = [...messages.value];
+    }
+  };
   const pendingAssistant = createPendingAssistantMessage(requestMode, stageId, statusText.value);
   streamMessages.set(pendingAssistant.key, pendingAssistant.message);
   placeholderTexts.set(pendingAssistant.key, statusText.value);
@@ -1437,6 +1635,7 @@ async function sendChat() {
       sessionId,
       {
         type: "chat",
+        request_id: requestId,
         message: text,
         draft_request_kind: draftRequestKind,
         selection: selectionPayload,
@@ -1547,6 +1746,12 @@ async function sendChat() {
           streamWarning.value = `${data.agent_name || "阶段专家"}暂时不可用：${data.message || "本轮由主导师继续指导"}`;
           statusText.value = "阶段专家降级，主导师继续回答";
         },
+        interrupted: () => {
+          interruptRequested.value = true;
+          markStreamMessagesInterrupted();
+          statusText.value = "已停止生成，本轮内容未保存";
+          updateWorkflowStatus(requestMode === "draft" ? "draft" : requestMode === "subagent" ? "expert" : "guide", statusText.value, "done");
+        },
         done: async (data) => {
           await loadSession(sessionId, true, true);
           await refreshDraftProposal();
@@ -1577,10 +1782,19 @@ async function sendChat() {
       draftStreamingContent.value = "";
       draftWorkbenchState.value = draftContentBeforeRequest.trim() ? "save_ready" : "idle";
     }
-    statusText.value = `对话失败：${err.message || err}`;
-    updateWorkflowStatus(requestMode === "draft" ? "draft" : requestMode === "subagent" ? "expert" : "guide", statusText.value, "error");
+    if (interruptRequested.value || err?.name === "AbortError") {
+      markStreamMessagesInterrupted();
+      statusText.value = "已停止生成，本轮内容未保存";
+      updateWorkflowStatus(requestMode === "draft" ? "draft" : requestMode === "subagent" ? "expert" : "guide", statusText.value, "done");
+    } else {
+      statusText.value = `对话失败：${err.message || err}`;
+      updateWorkflowStatus(requestMode === "draft" ? "draft" : requestMode === "subagent" ? "expert" : "guide", statusText.value, "error");
+    }
   } finally {
     isStreaming.value = false;
+    activeStreamRequestId.value = null;
+    activeStreamAbortController.value = null;
+    interruptRequested.value = false;
     scrollFeedToBottom();
   }
 }
@@ -1594,6 +1808,18 @@ function handleComposerKeydown(event: KeyboardEvent) {
   }
   event.preventDefault();
   void sendChat();
+}
+
+function resizeChatInput() {
+  const input = chatInputRef.value;
+  if (!input) {
+    return;
+  }
+  const maxHeight = 200;
+  input.style.height = "auto";
+  const nextHeight = Math.min(Math.max(input.scrollHeight, 64), maxHeight);
+  input.style.height = `${nextHeight}px`;
+  input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
 }
 
 async function goNextStage() {
@@ -1758,6 +1984,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  activeStreamAbortController.value?.abort();
   draftEditorResizeObserver?.disconnect();
   draftEditorResizeObserver = null;
   window.removeEventListener("resize", syncDraftEditorMetrics);

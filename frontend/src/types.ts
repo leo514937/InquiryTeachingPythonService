@@ -49,6 +49,18 @@ export type SessionDetail = SessionListItem & {
   outputs: StageOutput[];
 };
 
+export type SessionFileItem = {
+  id: string;
+  name: string;
+  extension: string;
+  mime_type: string;
+  size_bytes: number;
+  extracted_chars: number;
+  status: "processing" | "ready" | "failed";
+  error_message: string;
+  created_at: string;
+};
+
 export type DraftProposalSegment = {
   id: string;
   kind: "equal" | "replace" | "delete" | "insert";
@@ -97,6 +109,7 @@ export type MessageItem = {
   agent_id?: string | null;
   agent_name?: string | null;
   message_type?: string;
+  interrupted?: boolean;
   created_at?: string;
 };
 

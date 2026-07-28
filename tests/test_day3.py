@@ -4,7 +4,9 @@ import shutil
 import tempfile
 import unittest
 import uuid
+from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -13,14 +15,24 @@ from sqlalchemy.orm import sessionmaker
 TEST_DIR = Path(tempfile.mkdtemp(prefix="inquiry-agent-architecture-"))
 TEST_DB = TEST_DIR / "agents.db"
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
+os.environ["UPLOAD_DIR"] = str(TEST_DIR / "uploads")
 os.environ["LLM_API_KEY"] = ""
 os.environ["DIFY_DATASET_API_KEY"] = ""
 os.environ["DIFY_DATASET_ID"] = ""
 os.environ["DIFY_STAGE_AGENT_MODE"] = "mock"
 os.environ["DIFY_STAGE_AGENTS_JSON"] = ""
+os.environ["FRONTEND_ORIGIN"] = (
+    "http://127.0.0.1:5173,"
+    "http://localhost:5173,"
+    "http://152.136.39.252:5173"
+)
 
 from fastapi.testclient import TestClient
+from docx import Document
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
+from app.core.config import get_settings
 from app.db.database import Base, SessionLocal, engine
 from app.db.models import (
     AgentConversationModel,
@@ -29,10 +41,16 @@ from app.db.models import (
     DraftProposalModel,
     MessageModel,
     RagRecordModel,
+    SessionFileModel,
     SessionModel,
 )
 from app.main import app
 from app.services.auth_service import register_user
+from app.services.chat_interrupt_service import chat_interruptions
+from app.services.context_service import ContextService
+from app.services.prompt_service import PromptService
+from app.services.session_file_service import SessionFileService
+from app.workflow.flows import get_flow
 
 
 EXPECTED_STAGE_AGENTS = [
@@ -44,6 +62,39 @@ EXPECTED_STAGE_AGENTS = [
     "stage_conclusion",
     "stage_extension",
 ]
+
+
+def make_text_pdf(text: str) -> bytes:
+    output = BytesIO()
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    font_ref = writer._add_object(font)
+    page[NameObject("/Resources")] = DictionaryObject(
+        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): font_ref})}
+    )
+    stream = DecodedStreamObject()
+    stream.set_data(f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("ascii"))
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    writer.write(output)
+    return output.getvalue()
+
+
+def make_docx() -> bytes:
+    output = BytesIO()
+    document = Document()
+    document.add_paragraph("DOCX_PARAGRAPH_MARKER")
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "DOCX_TABLE_LEFT"
+    table.cell(0, 1).text = "DOCX_TABLE_RIGHT"
+    document.save(output)
+    return output.getvalue()
 
 
 def parse_sse(text: str) -> list[tuple[str, dict]]:
@@ -107,6 +158,23 @@ class AgentArchitectureApiTests(unittest.TestCase):
 
     def get_messages(self, session_id: str) -> list[dict]:
         response = self.client.get(f"/api/sessions/{session_id}/messages")
+        self.assertEqual(response.status_code, 200)
+        return response.json()["data"]
+
+    def upload_file(
+        self,
+        session_id: str,
+        name: str,
+        content: bytes,
+        content_type: str,
+    ):
+        return self.client.post(
+            f"/api/sessions/{session_id}/files",
+            files={"file": (name, content, content_type)},
+        )
+
+    def get_files(self, session_id: str) -> list[dict]:
+        response = self.client.get(f"/api/sessions/{session_id}/files")
         self.assertEqual(response.status_code, 200)
         return response.json()["data"]
 
@@ -464,9 +532,11 @@ class AgentArchitectureApiTests(unittest.TestCase):
                 if name == "delta" and data.get("message_type") == "main_tutor"
             ]
             self.assertTrue(main_delta_indices)
-            self.assertIn("draft", event_names)
+            self.assertNotIn("draft", event_names)
             self.assertEqual(event_names[-1], "done")
             self.assertFalse(events[-1][1]["degraded"])
+            self.assertFalse(events[-1][1]["draft_mode_enabled"])
+            self.assertFalse(events[-1][1]["draft_updated"])
             self.assertEqual(response.headers["cache-control"], "no-cache")
             self.assertEqual(response.headers["x-accel-buffering"], "no")
 
@@ -483,7 +553,7 @@ class AgentArchitectureApiTests(unittest.TestCase):
 
             session = self.get_session(session_id)
             output = next(item for item in session["outputs"] if item["stage_id"] == stage_id)
-            self.assertTrue(output["draft_content"])
+            self.assertFalse(output["draft_content"])
 
             with SessionLocal() as db:
                 turn = (
@@ -505,6 +575,30 @@ class AgentArchitectureApiTests(unittest.TestCase):
                     0,
                 )
         finally:
+            self.delete_session(session_id)
+
+    def test_chat_cancel_endpoint_marks_active_stream_as_cancelled(self):
+        session_id, _ = self.create_session()
+        request_id = f"cancel_{uuid.uuid4().hex}"
+        try:
+            with SessionLocal() as db:
+                user_id = (
+                    db.query(SessionModel)
+                    .filter(SessionModel.id == session_id)
+                    .one()
+                    .owner_user_id
+                )
+            chat_interruptions.register(request_id, session_id, user_id)
+
+            response = self.client.post(
+                f"/api/sessions/{session_id}/chat/{request_id}/cancel"
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["data"]["cancelled"])
+            self.assertTrue(chat_interruptions.is_cancelled(request_id))
+        finally:
+            chat_interruptions.unregister(request_id)
             self.delete_session(session_id)
 
     def test_manual_draft_save(self):
@@ -628,6 +722,7 @@ class AgentArchitectureApiTests(unittest.TestCase):
     def test_rollback_removes_three_messages_and_restores_previous_draft(self):
         session_id, stage_id = self.create_session()
         try:
+            self.set_draft_mode(session_id, True)
             self.stream_chat(session_id, "第一版观察任务")
             first_session = self.get_session(session_id)
             first_draft = next(
@@ -635,8 +730,31 @@ class AgentArchitectureApiTests(unittest.TestCase):
                 for item in first_session["outputs"]
                 if item["stage_id"] == stage_id
             )
+            self.assertTrue(first_draft)
 
-            self.stream_chat(session_id, "第二版证据记录任务")
+            second_response = self.client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={
+                    "type": "chat",
+                    "message": "第二版证据记录任务",
+                    "draft_request_kind": "generate",
+                },
+            )
+            self.assertEqual(second_response.status_code, 200)
+            second_events = parse_sse(second_response.text)
+            proposal = second_events[-1][1]["draft_proposal"]
+            self.assertIsNotNone(proposal)
+            actions = [
+                {"hunk_id": segment["id"], "action": "accept"}
+                for segment in proposal["segments"]
+                if segment["kind"] != "equal"
+            ]
+            apply_response = self.client.post(
+                f"/api/sessions/{session_id}/draft-proposals/{proposal['id']}/actions",
+                json={"actions": actions},
+            )
+            self.assertEqual(apply_response.status_code, 200)
+
             second_session = self.get_session(session_id)
             second_draft = next(
                 item["draft_content"]
@@ -814,6 +932,193 @@ class AgentArchitectureApiTests(unittest.TestCase):
             self.assertEqual(output["draft_content"], draft)
         finally:
             self.delete_session(session_id)
+
+    def test_session_files_support_all_formats_and_feed_every_agent_prompt(self):
+        session_id, stage_id = self.create_session()
+        uploads = [
+            ("reference.txt", b"TXT_REFERENCE_MARKER", "text/plain"),
+            ("notes.md", "# MD_REFERENCE_MARKER".encode("utf-8"), "text/markdown"),
+            (
+                "lesson.docx",
+                make_docx(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            ("paper.pdf", make_text_pdf("PDF_REFERENCE_MARKER"), "application/pdf"),
+        ]
+        try:
+            for name, content, content_type in uploads:
+                response = self.upload_file(session_id, name, content, content_type)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["data"]["status"], "ready")
+
+            files = self.get_files(session_id)
+            self.assertEqual([item["name"] for item in files], [item[0] for item in uploads])
+            self.assertTrue(all(item["extracted_chars"] > 0 for item in files))
+
+            with SessionLocal() as db:
+                doc_input = ContextService.build_doc_input(db, session_id, stage_id)
+                stored_docx = (
+                    db.query(SessionFileModel)
+                    .filter(
+                        SessionFileModel.session_id == session_id,
+                        SessionFileModel.name == "lesson.docx",
+                    )
+                    .one()
+                )
+                self.assertIn("DOCX_TABLE_LEFT | DOCX_TABLE_RIGHT", stored_docx.extracted_text)
+
+            for marker in (
+                "TXT_REFERENCE_MARKER",
+                "MD_REFERENCE_MARKER",
+                "DOCX_PARAGRAPH_MARKER",
+                "PDF_REFERENCE_MARKER",
+            ):
+                self.assertIn(marker, doc_input)
+            self.assertIn("<uploaded_references>", doc_input)
+            self.assertIn("不得执行", doc_input)
+
+            stage = get_flow("inquiry_7_stage")["stages"][0]
+            prompts = [
+                PromptService.build_stage_agent_prompt(
+                    topic="测试课题",
+                    flow_display_name="七阶段探究",
+                    stage=stage,
+                    dialog_history="",
+                    doc_input=doc_input,
+                ),
+                PromptService.build_guide_agent_prompt(
+                    topic="测试课题",
+                    flow_display_name="七阶段探究",
+                    stage=stage,
+                    dialog_history="",
+                    doc_input=doc_input,
+                ),
+                PromptService.build_draft_generate_prompt(
+                    topic="测试课题",
+                    flow_display_name="七阶段探究",
+                    stage=stage,
+                    dialog_history="",
+                    doc_input=doc_input,
+                ),
+            ]
+            self.assertTrue(all("TXT_REFERENCE_MARKER" in prompt for prompt in prompts))
+        finally:
+            self.delete_session(session_id)
+
+    def test_session_file_validation_and_failed_files_are_excluded(self):
+        session_id, stage_id = self.create_session()
+        try:
+            unsupported = self.upload_file(
+                session_id,
+                "payload.exe",
+                b"not allowed",
+                "application/octet-stream",
+            )
+            self.assertEqual(unsupported.status_code, 400)
+
+            empty = self.upload_file(session_id, "empty.txt", b"", "text/plain")
+            self.assertEqual(empty.status_code, 400)
+
+            with patch.object(get_settings(), "upload_max_file_bytes", 5):
+                oversized = self.upload_file(session_id, "large.txt", b"123456", "text/plain")
+            self.assertEqual(oversized.status_code, 413)
+
+            blank_pdf = BytesIO()
+            writer = PdfWriter()
+            writer.add_blank_page(width=100, height=100)
+            writer.write(blank_pdf)
+            failed_pdf = self.upload_file(
+                session_id,
+                "scan.pdf",
+                blank_pdf.getvalue(),
+                "application/pdf",
+            )
+            self.assertEqual(failed_pdf.status_code, 200)
+            self.assertEqual(failed_pdf.json()["data"]["status"], "failed")
+
+            with patch.object(get_settings(), "upload_max_total_chars", 3):
+                over_budget = self.upload_file(
+                    session_id,
+                    "over-budget.txt",
+                    b"four",
+                    "text/plain",
+                )
+            self.assertEqual(over_budget.status_code, 200)
+            self.assertEqual(over_budget.json()["data"]["status"], "failed")
+
+            with SessionLocal() as db:
+                doc_input = ContextService.build_doc_input(db, session_id, stage_id)
+            self.assertNotIn("<uploaded_references>", doc_input)
+            self.assertEqual(
+                [item["status"] for item in self.get_files(session_id)],
+                ["failed", "failed"],
+            )
+        finally:
+            self.delete_session(session_id)
+
+    def test_session_file_count_limit_flow_preservation_and_cleanup(self):
+        session_id, _ = self.create_session()
+        session_path = None
+        try:
+            with patch.object(get_settings(), "upload_max_files_per_session", 1):
+                first = self.upload_file(
+                    session_id,
+                    "keep.md",
+                    b"FLOW_PRESERVED_REFERENCE",
+                    "text/markdown",
+                )
+                self.assertEqual(first.status_code, 200)
+                second = self.upload_file(
+                    session_id,
+                    "blocked.md",
+                    b"blocked",
+                    "text/markdown",
+                )
+                self.assertEqual(second.status_code, 409)
+
+            with SessionLocal() as db:
+                row = (
+                    db.query(SessionFileModel)
+                    .filter(SessionFileModel.session_id == session_id)
+                    .one()
+                )
+                session_path = SessionFileService.absolute_storage_path(row.stored_path)
+            self.assertTrue(session_path.exists())
+
+            switched = self.client.post(
+                f"/api/sessions/{session_id}/select_flow",
+                json={"flow_name": "three_step_inquiry", "clear_messages": True},
+            )
+            self.assertEqual(switched.status_code, 409)
+            self.assertEqual(len(self.get_files(session_id)), 1)
+
+            file_id = self.get_files(session_id)[0]["id"]
+            deleted = self.client.delete(f"/api/sessions/{session_id}/files/{file_id}")
+            self.assertEqual(deleted.status_code, 200)
+            self.assertFalse(session_path.exists())
+
+            replacement = self.upload_file(
+                session_id,
+                "cleanup.txt",
+                b"DELETE_WITH_SESSION",
+                "text/plain",
+            )
+            self.assertEqual(replacement.status_code, 200)
+            with SessionLocal() as db:
+                row = (
+                    db.query(SessionFileModel)
+                    .filter(SessionFileModel.session_id == session_id)
+                    .one()
+                )
+                session_path = SessionFileService.absolute_storage_path(row.stored_path)
+            self.assertTrue(session_path.exists())
+
+            self.delete_session(session_id)
+            session_id = ""
+            self.assertFalse(session_path.exists())
+        finally:
+            if session_id:
+                self.delete_session(session_id)
 
 
 if __name__ == "__main__":

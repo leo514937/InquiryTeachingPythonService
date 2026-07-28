@@ -59,13 +59,19 @@ GET  /api/flows
 POST /api/sessions
 GET  /api/sessions/{session_id}
 GET  /api/sessions/{session_id}/messages
+GET  /api/sessions/{session_id}/files
+POST /api/sessions/{session_id}/files
+DELETE /api/sessions/{session_id}/files/{file_id}
 POST /api/sessions/{session_id}/select_flow
 POST /api/sessions/{session_id}/chat
+POST /api/sessions/{session_id}/chat/{request_id}/cancel
 POST /api/sessions/{session_id}/rollback
 GET  /api/sessions/{session_id}/dify_agents
 PUT  /api/sessions/{session_id}/stages/{stage_id}/draft
 GET  /api/sessions/{session_id}/export
 ```
+
+会话参考资料支持 `PDF`、`DOCX`、`TXT` 和 `MD`。上传成功后，系统会提取全文并自动加入当前会话后续的主导师、阶段专家和草案 Agent 上下文。默认限制为单文件 10 MB、每个会话 10 个文件、可用正文总计 50,000 字符；扫描版 PDF 暂不支持 OCR。
 
 ## 快速请求示例
 
@@ -90,7 +96,13 @@ curl -X POST http://localhost:8010/api/sessions/{session_id}/select_flow ^
 ```bash
 curl -N -X POST http://localhost:8010/api/sessions/{session_id}/chat ^
   -H "Content-Type: application/json" ^
-  -d "{\"type\":\"chat\",\"message\":\"我想从生活中的镜子反光现象开始导入\"}"
+  -d "{\"type\":\"chat\",\"request_id\":\"chat_demo_001\",\"message\":\"我想从生活中的镜子反光现象开始导入\"}"
+```
+
+流式生成过程中可用同一个 `request_id` 发送取消请求；后端会停止当前模型流，且中断的半截回答不会落库：
+
+```bash
+curl -X POST http://localhost:8010/api/sessions/{session_id}/chat/chat_demo_001/cancel
 ```
 
 后端会自动调用当前阶段绑定的 Dify 专家，再由 `main_agent` 整合为主导师回复，无需前端手动选择专家。
@@ -142,6 +154,7 @@ event: warning  # 专家不可用时可选
 event: agent    # main_agent
 event: delta    # 主导师整合回复
 event: draft    # 仅由主导师更新草稿
+event: interrupted  # 本轮被前端或后端中断，不会落库
 event: done
 ```
 
