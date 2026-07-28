@@ -65,15 +65,6 @@ export async function getMessages(sessionId: string): Promise<MessageItem[]> {
   return payload.data || [];
 }
 
-export async function selectFlow(sessionId: string, flowName: string): Promise<SessionDetail> {
-  const payload = await readJson<ApiEnvelope<SessionDetail>>(`${API_BASE}/api/sessions/${sessionId}/select_flow`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ flow_name: flowName, clear_messages: true }),
-  });
-  return payload.data;
-}
-
 export async function getDifyAgents(sessionId: string): Promise<DifyAgentItem[]> {
   const payload = await readJson<ApiEnvelope<DifyAgentItem[]>>(`${API_BASE}/api/sessions/${sessionId}/dify_agents`);
   return payload.data || [];

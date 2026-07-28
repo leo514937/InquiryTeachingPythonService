@@ -27,6 +27,7 @@ from app.db.models import (
     AppSettingModel,
     ChatTurnModel,
     DraftProposalModel,
+    MessageModel,
     RagRecordModel,
     SessionModel,
 )
@@ -299,6 +300,137 @@ class AgentArchitectureApiTests(unittest.TestCase):
         finally:
             alice.close()
             bob.close()
+
+    def test_same_topic_different_flows_are_separate_and_flow_switch_cannot_clear_data(self):
+        first_response = self.client.post(
+            "/api/sessions",
+            json={"topic": "光的折射", "flow_name": "inquiry_7_stage"},
+        )
+        second_response = self.client.post(
+            "/api/sessions",
+            json={"topic": "光的折射", "flow_name": "three_step_inquiry"},
+        )
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+
+        first = first_response.json()["data"]
+        second = second_response.json()["data"]
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertEqual(first["flow_name"], "inquiry_7_stage")
+        self.assertEqual(second["flow_name"], "three_step_inquiry")
+        self.assertNotEqual(len(first["outputs"]), len(second["outputs"]))
+        listed_ids = {
+            item["id"]
+            for item in self.client.get("/api/sessions").json()["data"]
+        }
+        self.assertTrue({first["id"], second["id"]}.issubset(listed_ids))
+
+        first_stage_id = first["outputs"][0]["stage_id"]
+        with SessionLocal() as db:
+            db.add(
+                MessageModel(
+                    id="msg_isolation_test",
+                    session_id=first["id"],
+                    stage_id=first_stage_id,
+                    role="user",
+                    content="只属于七阶段流程的消息",
+                    agent_id=None,
+                    message_type="chat",
+                    created_at="2026-01-01T00:00:00+00:00",
+                )
+            )
+            db.add(
+                ChatTurnModel(
+                    turn_id="turn_isolation_test",
+                    session_id=first["id"],
+                    stage_id=first_stage_id,
+                    user_message_id="msg_isolation_test",
+                    assistant_message_id="msg_isolation_test",
+                    draft_before="",
+                    draft_after="",
+                    created_at="2026-01-01T00:00:00+00:00",
+                )
+            )
+            db.add(
+                DraftProposalModel(
+                    id="proposal_isolation_test",
+                    session_id=first["id"],
+                    stage_id=first_stage_id,
+                    base_content="旧草案",
+                    candidate_content="新草案",
+                    diff_json="[]",
+                    status="pending",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                )
+            )
+            db.add(
+                RagRecordModel(
+                    id="rag_isolation_test",
+                    session_id=first["id"],
+                    stage_id=first_stage_id,
+                    query="隔离测试",
+                    context="只属于第一个会话",
+                    source_json="[]",
+                    created_at="2026-01-01T00:00:00+00:00",
+                )
+            )
+            db.add(
+                AgentConversationModel(
+                    id="conversation_isolation_test",
+                    session_id=first["id"],
+                    agent_id="stage_observation_start",
+                    conversation_id="conversation-1",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                )
+            )
+            db.commit()
+
+        switched = self.client.post(
+            f"/api/sessions/{first['id']}/select_flow",
+            json={"flow_name": "three_step_inquiry", "clear_messages": True},
+        )
+        self.assertEqual(switched.status_code, 409)
+        self.assertIn("流程不可修改", switched.json()["detail"])
+
+        first_after = self.get_session(first["id"])
+        second_after = self.get_session(second["id"])
+        self.assertEqual(first_after["flow_name"], "inquiry_7_stage")
+        self.assertEqual(len(first_after["outputs"]), 7)
+        self.assertEqual(len(second_after["outputs"]), 3)
+        self.assertEqual(len(self.get_messages(first["id"])), 1)
+        self.assertEqual(self.get_messages(second["id"]), [])
+
+        with SessionLocal() as db:
+            self.assertEqual(
+                db.query(ChatTurnModel)
+                .filter(ChatTurnModel.session_id == first["id"])
+                .count(),
+                1,
+            )
+            self.assertEqual(
+                db.query(DraftProposalModel)
+                .filter(DraftProposalModel.session_id == first["id"])
+                .count(),
+                1,
+            )
+            self.assertEqual(
+                db.query(RagRecordModel)
+                .filter(RagRecordModel.session_id == first["id"])
+                .count(),
+                1,
+            )
+            self.assertEqual(
+                db.query(AgentConversationModel)
+                .filter(AgentConversationModel.session_id == first["id"])
+                .count(),
+                1,
+            )
+
+        self.delete_session(first["id"])
+        self.assertEqual(self.get_session(second["id"])["flow_name"], "three_step_inquiry")
+        self.delete_session(second["id"])
 
     def test_chat_stream_defaults_to_main_mode_and_persists_two_messages(self):
         session_id, stage_id = self.create_session()

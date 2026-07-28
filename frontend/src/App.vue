@@ -47,15 +47,7 @@
             <label>当前会话</label>
             <select :value="selectedSessionId" @change="e => selectSession((e.target as HTMLSelectElement).value)" class="input compact">
               <option v-for="item in sessions" :key="item.id" :value="item.id">
-                {{ item.topic }}
-              </option>
-            </select>
-          </div>
-          <div class="selector-row" v-if="currentSession">
-            <label>教学流程</label>
-            <select :value="selectedFlowName" @change="e => switchFlow((e.target as HTMLSelectElement).value)" class="input compact">
-              <option v-for="flow in flows" :key="flow.name" :value="flow.name">
-                {{ flow.display_name }}
+                {{ item.topic }} · {{ item.flow_display_name }}
               </option>
             </select>
           </div>
@@ -505,7 +497,7 @@
         </label>
         <label class="field">
           <span>选择教学流</span>
-          <select v-model="selectedFlowName" class="input">
+          <select v-model="newSessionFlowName" class="input">
             <option v-for="flow in flows" :key="flow.name" :value="flow.name">
               {{ flow.display_name }} ({{ flow.stage_count }}阶段)
             </option>
@@ -544,7 +536,6 @@ import {
   logoutUser,
   rollbackSession,
   saveDraft,
-  selectFlow,
   setDraftMode,
   setChatMode,
   streamChat,
@@ -569,7 +560,7 @@ const authLoading = ref(true);
 const sessions = ref<SessionListItem[]>([]);
 const currentSession = ref<SessionDetail | null>(null);
 const messages = ref<MessageItem[]>([]);
-const selectedFlowName = ref("inquiry_7_stage");
+const newSessionFlowName = ref("inquiry_7_stage");
 const selectedSessionId = ref("");
 const selectedStageId = ref("");
 const topicInput = ref("光的反射");
@@ -661,7 +652,7 @@ const stageNameMap = computed<Record<string, string>>(() => {
 
 const activeStages = computed<FlowStage[]>(() => {
   if (!currentSession.value) {
-    return flows.value.find((item) => item.name === selectedFlowName.value)?.stages || [];
+    return flows.value.find((item) => item.name === newSessionFlowName.value)?.stages || [];
   }
   return flows.value.find((item) => item.name === currentSession.value?.flow_name)?.stages || [];
 });
@@ -1106,8 +1097,8 @@ async function refreshWorkspace() {
   } catch {
     chatMode.value = "main";
   }
-  if (!selectedFlowName.value && flowList[0]) {
-    selectedFlowName.value = flowList[0].name;
+  if (!newSessionFlowName.value && flowList[0]) {
+    newSessionFlowName.value = flowList[0].name;
   }
   statusText.value = "工作区已刷新";
 }
@@ -1147,7 +1138,6 @@ async function loadSession(sessionId: string, loadMessages = true, preserveWarni
   }
   currentSession.value = session;
   selectedSessionId.value = session.id;
-  selectedFlowName.value = session.flow_name;
   selectedStageId.value = pickStageIdFromSession(session);
   if (loadMessages) {
     messages.value = await getMessages(sessionId);
@@ -1239,7 +1229,7 @@ async function createWorkspaceSession() {
     statusText.value = "请先输入课题名称";
     return;
   }
-  const created = await createSession(topic, selectedFlowName.value);
+  const created = await createSession(topic, newSessionFlowName.value);
   sessions.value = [created, ...sessions.value.filter((item) => item.id !== created.id)];
   await loadSession(created.id, true);
   statusText.value = `已创建会话：${topic}`;
@@ -1253,18 +1243,6 @@ async function handleCreateSession() {
   }
   await createWorkspaceSession();
   showNewSessionModal.value = false;
-}
-
-async function switchFlow(flowName: string) {
-  selectedFlowName.value = flowName;
-  if (!currentSession.value) {
-    return;
-  }
-  const updated = await selectFlow(currentSession.value.id, flowName);
-  currentSession.value = updated;
-  await loadSession(updated.id, true);
-  sessions.value = [updated, ...sessions.value.filter((item) => item.id !== updated.id)];
-  statusText.value = `流程已切换为 ${updated.flow_display_name}`;
 }
 
 function inspectStage(stageId: string) {

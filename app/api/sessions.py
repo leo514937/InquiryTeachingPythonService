@@ -243,29 +243,11 @@ def select_flow(
     db: Session = Depends(get_db),
     user: UserModel = Depends(get_current_user),
 ):
-    sess = get_owned_session(db, session_id, user.id)
-    try:
-        get_flow(payload.flow_name)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    db.query(StageOutputModel).filter(StageOutputModel.session_id == session_id).delete()
-    db.query(AgentConversationModel).filter(AgentConversationModel.session_id == session_id).delete()
-    db.query(ChatTurnModel).filter(ChatTurnModel.session_id == session_id).delete()
-    db.query(DraftProposalModel).filter(DraftProposalModel.session_id == session_id).delete()
-    db.query(RagRecordModel).filter(RagRecordModel.session_id == session_id).delete()
-    if payload.clear_messages:
-        db.query(MessageModel).filter(MessageModel.session_id == session_id).delete()
-
-    sess.flow_name = payload.flow_name
-    sess.current_stage_index = 0
-    sess.status = "active"
-    sess.draft_mode_enabled = 0
-    sess.updated_at = now_iso()
-    create_stage_outputs(db, session_id, payload.flow_name)
-    db.commit()
-    db.refresh(sess)
-    return {"code": 0, "message": "flow selected", "data": serialize_session(sess, db)}
+    get_owned_session(db, session_id, user.id)
+    raise HTTPException(
+        status_code=409,
+        detail="流程不可修改，请新建会话",
+    )
 
 
 @router.post("/{session_id}/confirm-stage")
