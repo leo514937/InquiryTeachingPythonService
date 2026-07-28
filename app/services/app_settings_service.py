@@ -2,7 +2,7 @@ import datetime as dt
 
 from sqlalchemy.orm import Session
 
-from app.db.models import AppSettingModel
+from app.db.models import AppSettingModel, UserModel
 
 
 CHAT_MODE_KEY = "global_chat_mode"
@@ -55,3 +55,17 @@ def set_global_chat_mode(db: Session, mode: str) -> str:
         )
     db.commit()
     return mode
+
+
+def get_user_chat_mode(user: UserModel) -> str:
+    return user.chat_mode if user.chat_mode in VALID_CHAT_MODES else MAIN_MODE
+
+
+def set_user_chat_mode(db: Session, user: UserModel, mode: str) -> str:
+    if mode not in VALID_CHAT_MODES:
+        raise ValueError(f"Unsupported chat mode: {mode}")
+
+    user.chat_mode = mode
+    db.commit()
+    db.refresh(user)
+    return user.chat_mode

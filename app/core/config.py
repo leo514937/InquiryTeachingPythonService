@@ -46,6 +46,12 @@ class Settings:
 
     dify_stage_agent_mode: str = os.getenv("DIFY_STAGE_AGENT_MODE", "mock").strip().lower()
     request_timeout_seconds: float = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "60"))
+    frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://127.0.0.1:5173").strip()
+    auth_session_days: int = int(os.getenv("AUTH_SESSION_DAYS", "30"))
+    auth_cookie_secure: bool = os.getenv(
+        "AUTH_COOKIE_SECURE",
+        "false",
+    ).strip().lower() in {"1", "true", "yes", "on"}
 
     def dify_stage_agents(self) -> list[DifyAgentConfig]:
         raw = os.getenv("DIFY_STAGE_AGENTS_JSON", "").strip()

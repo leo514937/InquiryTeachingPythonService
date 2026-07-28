@@ -1,5 +1,6 @@
 import type {
   DifyAgentItem,
+  AuthUser,
   ChatMode,
   DraftProposal,
   DraftSelection,
@@ -18,7 +19,10 @@ type ApiEnvelope<T> = {
 };
 
 async function readJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, init);
+  const response = await fetch(input, {
+    ...init,
+    credentials: "include",
+  });
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || response.statusText);
@@ -73,6 +77,33 @@ export async function selectFlow(sessionId: string, flowName: string): Promise<S
 export async function getDifyAgents(sessionId: string): Promise<DifyAgentItem[]> {
   const payload = await readJson<ApiEnvelope<DifyAgentItem[]>>(`${API_BASE}/api/sessions/${sessionId}/dify_agents`);
   return payload.data || [];
+}
+
+export async function registerUser(username: string, password: string): Promise<AuthUser> {
+  const payload = await readJson<ApiEnvelope<AuthUser>>(`${API_BASE}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  return payload.data;
+}
+
+export async function loginUser(username: string, password: string): Promise<AuthUser> {
+  const payload = await readJson<ApiEnvelope<AuthUser>>(`${API_BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  return payload.data;
+}
+
+export async function getCurrentUser(): Promise<AuthUser> {
+  const payload = await readJson<ApiEnvelope<AuthUser>>(`${API_BASE}/api/auth/me`);
+  return payload.data;
+}
+
+export async function logoutUser(): Promise<void> {
+  await readJson<ApiEnvelope<null>>(`${API_BASE}/api/auth/logout`, { method: "POST" });
 }
 
 export async function getChatMode(): Promise<ChatMode> {
@@ -145,7 +176,9 @@ export async function rollbackSession(
 }
 
 export async function exportSession(sessionId: string): Promise<Blob> {
-  const response = await fetch(`${API_BASE}/api/sessions/${sessionId}/export`);
+  const response = await fetch(`${API_BASE}/api/sessions/${sessionId}/export`, {
+    credentials: "include",
+  });
   if (!response.ok) {
     throw new Error(await response.text());
   }
@@ -179,6 +212,7 @@ export async function streamChat(
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/api/sessions/${sessionId}/chat`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });

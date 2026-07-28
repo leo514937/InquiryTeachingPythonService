@@ -3,7 +3,11 @@ import os
 import shutil
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 
 TEST_DIR = Path(tempfile.mkdtemp(prefix="inquiry-agent-architecture-"))
@@ -17,14 +21,17 @@ os.environ["DIFY_STAGE_AGENTS_JSON"] = ""
 
 from fastapi.testclient import TestClient
 
-from app.db.database import SessionLocal, engine
+from app.db.database import Base, SessionLocal, engine
 from app.db.models import (
     AgentConversationModel,
+    AppSettingModel,
     ChatTurnModel,
     DraftProposalModel,
     RagRecordModel,
+    SessionModel,
 )
 from app.main import app
+from app.services.auth_service import register_user
 
 
 EXPECTED_STAGE_AGENTS = [
@@ -57,6 +64,13 @@ class AgentArchitectureApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(app)
+        cls.username = f"test_{uuid.uuid4().hex[:10]}"
+        response = cls.client.post(
+            "/api/auth/register",
+            json={"username": cls.username, "password": "test-password-123"},
+        )
+        if response.status_code != 200:
+            raise AssertionError(response.text)
 
     @classmethod
     def tearDownClass(cls):
@@ -127,6 +141,164 @@ class AgentArchitectureApiTests(unittest.TestCase):
             self.assertTrue(all(item["mode"] == "prompt" for item in agents))
         finally:
             self.delete_session(session_id)
+
+    def test_auth_registration_validation_and_logout(self):
+        username = f"auth_{uuid.uuid4().hex[:10]}"
+        client = TestClient(app)
+        try:
+            invalid = client.post(
+                "/api/auth/register",
+                json={"username": "ab", "password": "short"},
+            )
+            self.assertEqual(invalid.status_code, 422)
+
+            registered = client.post(
+                "/api/auth/register",
+                json={"username": username, "password": "valid-password-123"},
+            )
+            self.assertEqual(registered.status_code, 200)
+            self.assertEqual(registered.json()["data"]["username"], username)
+            self.assertEqual(client.get("/api/auth/me").status_code, 200)
+
+            duplicate = client.post(
+                "/api/auth/register",
+                json={"username": username.upper(), "password": "valid-password-123"},
+            )
+            self.assertEqual(duplicate.status_code, 409)
+
+            logout = client.post("/api/auth/logout")
+            self.assertEqual(logout.status_code, 200)
+            self.assertEqual(client.get("/api/auth/me").status_code, 401)
+
+            invalid_login = client.post(
+                "/api/auth/login",
+                json={"username": username, "password": "wrong-password"},
+            )
+            self.assertEqual(invalid_login.status_code, 401)
+            valid_login = client.post(
+                "/api/auth/login",
+                json={"username": username.upper(), "password": "valid-password-123"},
+            )
+            self.assertEqual(valid_login.status_code, 200)
+            self.assertEqual(client.get("/api/auth/me").status_code, 200)
+            cors_response = client.get(
+                "/api/auth/me",
+                headers={"Origin": "http://127.0.0.1:5173"},
+            )
+            self.assertEqual(
+                cors_response.headers.get("access-control-allow-origin"),
+                "http://127.0.0.1:5173",
+            )
+            self.assertEqual(
+                cors_response.headers.get("access-control-allow-credentials"),
+                "true",
+            )
+        finally:
+            client.close()
+
+    def test_first_registration_claims_legacy_sessions_and_chat_mode(self):
+        database_path = TEST_DIR / f"legacy-{uuid.uuid4().hex}.db"
+        local_engine = create_engine(
+            f"sqlite:///{database_path.as_posix()}",
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(local_engine)
+        LocalSession = sessionmaker(autocommit=False, autoflush=False, bind=local_engine)
+        try:
+            with LocalSession() as db:
+                db.add(
+                    AppSettingModel(
+                        key="global_chat_mode",
+                        value="subagent",
+                        updated_at="2026-01-01T00:00:00+00:00",
+                    )
+                )
+                legacy = SessionModel(
+                    id="legacy_session",
+                    owner_user_id=None,
+                    title="旧会话",
+                    topic="旧课题",
+                    flow_name="inquiry_7_stage",
+                    current_stage_index=0,
+                    status="active",
+                    draft_mode_enabled=0,
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                )
+                db.add(legacy)
+                db.commit()
+
+                user, _ = register_user(db, "legacy_owner", "valid-password-123")
+                db.refresh(legacy)
+
+                self.assertEqual(legacy.owner_user_id, user.id)
+                self.assertEqual(user.chat_mode, "subagent")
+        finally:
+            local_engine.dispose()
+
+    def test_users_have_isolated_sessions_and_chat_modes(self):
+        alice = TestClient(app)
+        bob = TestClient(app)
+        try:
+            for client, username in (
+                (alice, f"alice_{uuid.uuid4().hex[:10]}"),
+                (bob, f"bob_{uuid.uuid4().hex[:10]}"),
+            ):
+                response = client.post(
+                    "/api/auth/register",
+                    json={"username": username, "password": "valid-password-123"},
+                )
+                self.assertEqual(response.status_code, 200)
+
+            alice_session = alice.post(
+                "/api/sessions",
+                json={"topic": "Alice 的课题", "flow_name": "inquiry_7_stage"},
+            ).json()["data"]["id"]
+            bob_session = bob.post(
+                "/api/sessions",
+                json={"topic": "Bob 的课题", "flow_name": "inquiry_7_stage"},
+            ).json()["data"]["id"]
+
+            self.assertNotEqual(alice_session, bob_session)
+            self.assertEqual(
+                [item["id"] for item in alice.get("/api/sessions").json()["data"]],
+                [alice_session],
+            )
+            self.assertEqual(
+                [item["id"] for item in bob.get("/api/sessions").json()["data"]],
+                [bob_session],
+            )
+            self.assertEqual(alice.get(f"/api/sessions/{bob_session}").status_code, 404)
+            self.assertEqual(bob.delete(f"/api/sessions/{alice_session}").status_code, 404)
+
+            self.assertEqual(
+                alice.put(
+                    "/api/settings/chat-mode",
+                    json={"chat_mode": "subagent"},
+                ).status_code,
+                200,
+            )
+            self.assertEqual(
+                bob.get("/api/settings/chat-mode").json()["data"]["chat_mode"],
+                "main",
+            )
+            alice_events = parse_sse(
+                alice.post(
+                    f"/api/sessions/{alice_session}/chat",
+                    json={"type": "chat", "message": "Alice 的第一轮提问"},
+                ).text
+            )
+            bob_events = parse_sse(
+                bob.post(
+                    f"/api/sessions/{bob_session}/chat",
+                    json={"type": "chat", "message": "Bob 的第一轮提问"},
+                ).text
+            )
+            self.assertEqual(alice_events[0][1]["chat_mode"], "subagent")
+            self.assertEqual(bob_events[0][1]["chat_mode"], "main")
+        finally:
+            alice.close()
+            bob.close()
 
     def test_chat_stream_defaults_to_main_mode_and_persists_two_messages(self):
         session_id, stage_id = self.create_session()

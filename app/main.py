@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import chat, export, flows, health, sessions, settings
+from app.api import auth, chat, export, flows, health, sessions, settings
+from app.core.config import get_settings
 from app.db.database import Base, engine
 from app.db.migrations import ensure_schema_compatibility
 
@@ -12,17 +13,19 @@ ensure_schema_compatibility()
 app = FastAPI(
     title="AI 教师探究式教学指导 Python Service",
     version="0.1.0",
-    description="无登录校验的探究式教学设计后端服务，参考 GoMAown 的流程选择、会话状态和专家路由链路。",
+    description="支持多用户会话隔离的探究式教学设计后端服务。",
 )
 
+app_settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=[app_settings.frontend_origin],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(health.router)
 app.include_router(flows.router)
 app.include_router(sessions.router)

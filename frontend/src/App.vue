@@ -1,4 +1,7 @@
 <template>
+  <AuthPanel v-if="!authLoading && !currentUser" @authenticated="handleAuthenticated" />
+  <div v-else-if="authLoading" class="auth-loading">正在验证登录状态…</div>
+  <div v-else>
   <div
     class="app-shell"
     :class="{
@@ -18,6 +21,10 @@
             <button class="ghost-button compact theme-toggle-btn" @click="toggleTheme">
               {{ themeMode === "dark" ? "浅色模式" : "深色模式" }}
             </button>
+            <div class="user-account" v-if="currentUser">
+              <span>{{ currentUser.username }}</span>
+              <button class="ghost-button compact" type="button" @click="logout">退出</button>
+            </div>
             <div class="status-pill" :class="{ live: isStreaming }">
               <span class="status-dot"></span>
               {{ isStreaming ? "SSE 流式中" : "已连接" }}
@@ -516,21 +523,25 @@
       <span>当前阶段草稿已保存到服务器。</span>
     </div>
   </div>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import AuthPanel from "@/components/AuthPanel.vue";
 import {
   createSession,
   deleteSession,
   applyDraftProposalActions,
   getDraftProposal,
   getChatMode,
+  getCurrentUser,
   exportSession,
   getFlows,
   getMessages,
   getSession,
   getSessions,
+  logoutUser,
   rollbackSession,
   saveDraft,
   selectFlow,
@@ -539,6 +550,7 @@ import {
   streamChat,
 } from "@/api";
 import type {
+  AuthUser,
   ChatMode,
   DraftProposal,
   DraftSelection,
@@ -552,6 +564,8 @@ import type {
 import { renderMarkdown } from "@/utils/markdown";
 
 const flows = ref<FlowInfo[]>([]);
+const currentUser = ref<AuthUser | null>(null);
+const authLoading = ref(true);
 const sessions = ref<SessionListItem[]>([]);
 const currentSession = ref<SessionDetail | null>(null);
 const messages = ref<MessageItem[]>([]);
@@ -1096,6 +1110,34 @@ async function refreshWorkspace() {
     selectedFlowName.value = flowList[0].name;
   }
   statusText.value = "工作区已刷新";
+}
+
+async function handleAuthenticated(user: AuthUser) {
+  currentUser.value = user;
+  await refreshWorkspace();
+  if (sessions.value[0]) {
+    await loadSession(sessions.value[0].id, true);
+  }
+}
+
+async function logout() {
+  if (isStreaming.value) {
+    return;
+  }
+  try {
+    await logoutUser();
+  } finally {
+    currentUser.value = null;
+    sessions.value = [];
+    currentSession.value = null;
+    selectedSessionId.value = "";
+    selectedStageId.value = "";
+    messages.value = [];
+    draftContent.value = "";
+    draftProposal.value = null;
+    draftStreamingContent.value = "";
+    statusText.value = "已退出登录";
+  }
 }
 
 async function loadSession(sessionId: string, loadMessages = true, preserveWarning = false) {
@@ -1719,9 +1761,13 @@ onMounted(async () => {
   }
   applyTheme(themeMode.value);
   updateWorkflowStatus("idle", "准备就绪", "done");
-  await refreshWorkspace();
-  if (sessions.value[0]) {
-    await loadSession(sessions.value[0].id, true);
+  try {
+    const user = await getCurrentUser();
+    await handleAuthenticated(user);
+  } catch {
+    currentUser.value = null;
+  } finally {
+    authLoading.value = false;
   }
   syncDraftEditor();
   updateDraftCursorLine();

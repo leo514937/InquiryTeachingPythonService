@@ -97,7 +97,8 @@ echo "启动后端……"
 
 (
     cd "$ROOT_DIR"
-    nohup "$ROOT_DIR/.venv/bin/python" \
+    nohup env "FRONTEND_ORIGIN=http://$PUBLIC_IP:$FRONTEND_PORT" \
+        "$ROOT_DIR/.venv/bin/python" \
         -m uvicorn app.main:app \
         --host 0.0.0.0 \
         --port "$BACKEND_PORT" \
