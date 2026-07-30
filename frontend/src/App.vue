@@ -93,8 +93,9 @@
               智能体: {{ stage.expert }}
             </div>
             <div
+              v-if="activeStageOutput(stage.id)?.draft_content || activeStageOutput(stage.id)?.final_content"
               class="doc-preview markdown-preview"
-              v-html="renderMarkdown(activeStageOutput(stage.id)?.draft_content || activeStageOutput(stage.id)?.final_content || '暂无内容，等待对话生成...')"
+              v-html="renderMarkdown(activeStageOutput(stage.id)?.draft_content || activeStageOutput(stage.id)?.final_content || '')"
             ></div>
           </div>
         </div>
@@ -251,7 +252,7 @@
                 ref="chatInputRef"
                 v-model="chatInput"
                 class="chat-input"
-                rows="3"
+                rows="2"
                 wrap="soft"
                 placeholder="输入课堂切入点、问题追问、实验思路或阶段补充内容；可先从右侧添加 @行号引用。Enter 发送，Shift+Enter 换行"
                 @input="resizeChatInput"
@@ -1817,7 +1818,7 @@ function resizeChatInput() {
   }
   const maxHeight = 200;
   input.style.height = "auto";
-  const nextHeight = Math.min(Math.max(input.scrollHeight, 64), maxHeight);
+  const nextHeight = Math.min(Math.max(input.scrollHeight, 42), maxHeight);
   input.style.height = `${nextHeight}px`;
   input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
 }
