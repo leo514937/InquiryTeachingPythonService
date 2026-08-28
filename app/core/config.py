@@ -80,7 +80,7 @@ class Settings:
                 command="@stage_observation_start",
                 name="情境探寻专家",
                 description="负责从真实现象、生活事件和具体实物中设计观察起点。",
-                flow_names=("inquiry_7_stage", "three_step_inquiry", "steam_project"),
+                flow_names=("inquiry_7_stage", "three_step_inquiry", "steam_project", "insect_hotel_project"),
             ),
             DifyAgentConfig(
                 id="stage_question_refine",
@@ -88,7 +88,7 @@ class Settings:
                 command="@stage_question_refine",
                 name="问题提炼导师",
                 description="负责把学生的零散发问提炼为可验证的核心探究问题。",
-                flow_names=("inquiry_7_stage", "three_step_inquiry", "steam_project"),
+                flow_names=("inquiry_7_stage", "three_step_inquiry", "steam_project", "insect_hotel_project"),
             ),
             DifyAgentConfig(
                 id="stage_hypothesis",
@@ -96,7 +96,7 @@ class Settings:
                 command="@stage_hypothesis",
                 name="头脑风暴教练",
                 description="负责整理学生猜想并形成可验证的科学假设。",
-                flow_names=("inquiry_7_stage", "three_step_inquiry", "steam_project"),
+                flow_names=("inquiry_7_stage", "three_step_inquiry", "steam_project", "insect_hotel_project"),
             ),
             DifyAgentConfig(
                 id="stage_experiment_design",
@@ -104,7 +104,7 @@ class Settings:
                 command="@stage_experiment_design",
                 name="实验设计专家",
                 description="负责实验变量、材料、步骤、记录方式和安全边界。",
-                flow_names=("inquiry_7_stage", "three_step_inquiry", "steam_project"),
+                flow_names=("inquiry_7_stage", "three_step_inquiry", "steam_project", "insect_hotel_project"),
             ),
             DifyAgentConfig(
                 id="stage_new_questions",
@@ -120,7 +120,7 @@ class Settings:
                 command="@stage_conclusion",
                 name="证据链整理师",
                 description="负责用证据和推理组织阶段性科学结论。",
-                flow_names=("inquiry_7_stage", "three_step_inquiry", "steam_project"),
+                flow_names=("inquiry_7_stage", "three_step_inquiry", "steam_project", "insect_hotel_project"),
             ),
             DifyAgentConfig(
                 id="stage_extension",
@@ -128,7 +128,7 @@ class Settings:
                 command="@stage_extension",
                 name="探究闭环架构师",
                 description="负责迁移拓展、成果反思和下一轮探究问题。",
-                flow_names=("inquiry_7_stage", "three_step_inquiry", "steam_project"),
+                flow_names=("inquiry_7_stage", "three_step_inquiry", "steam_project", "insect_hotel_project"),
             ),
         ]
 
