@@ -63,6 +63,15 @@ EXPECTED_STAGE_AGENTS = [
     "stage_extension",
 ]
 
+EXPECTED_INSECT_HOTEL_STAGES = [
+    ("natural_materials", "stage_observation_start"),
+    ("habitat_needs", "stage_question_refine"),
+    ("structure_design", "stage_hypothesis"),
+    ("build_and_sensing", "stage_experiment_design"),
+    ("settlement_observation", "stage_conclusion"),
+    ("iteration_sharing", "stage_extension"),
+]
+
 
 def make_text_pdf(text: str) -> bytes:
     output = BytesIO()
@@ -130,10 +139,14 @@ class AgentArchitectureApiTests(unittest.TestCase):
         engine.dispose()
         shutil.rmtree(TEST_DIR, ignore_errors=True)
 
-    def create_session(self) -> tuple[str, str]:
+    def create_session(
+        self,
+        flow_name: str = "inquiry_7_stage",
+        topic: str = "光的折射",
+    ) -> tuple[str, str]:
         response = self.client.post(
             "/api/sessions",
-            json={"topic": "光的折射", "flow_name": "inquiry_7_stage"},
+            json={"topic": topic, "flow_name": flow_name},
         )
         self.assertEqual(response.status_code, 200)
         data = response.json()["data"]
@@ -208,6 +221,88 @@ class AgentArchitectureApiTests(unittest.TestCase):
             self.assertTrue(all("stage_id" in item for item in agents))
             self.assertTrue(all(item["configured"] for item in agents))
             self.assertTrue(all(item["mode"] == "prompt" for item in agents))
+        finally:
+            self.delete_session(session_id)
+
+    def test_insect_hotel_flow_is_listed_with_expected_stages(self):
+        flow_response = self.client.get("/api/flows")
+        self.assertEqual(flow_response.status_code, 200)
+
+        insect_flow = next(
+            item
+            for item in flow_response.json()["data"]
+            if item["name"] == "insect_hotel_project"
+        )
+
+        self.assertEqual(insect_flow["display_name"], "昆虫旅馆项目探究流")
+        self.assertEqual(insect_flow["stage_count"], 6)
+        self.assertEqual(
+            [(stage["id"], stage["agent_id"]) for stage in insect_flow["stages"]],
+            EXPECTED_INSECT_HOTEL_STAGES,
+        )
+
+    def test_insect_hotel_session_initializes_expected_outputs_and_agents(self):
+        session_id, stage_id = self.create_session(
+            flow_name="insect_hotel_project",
+            topic="昆虫旅馆",
+        )
+        try:
+            session = self.get_session(session_id)
+            self.assertEqual(session["flow_name"], "insect_hotel_project")
+            self.assertEqual(session["flow_display_name"], "昆虫旅馆项目探究流")
+            self.assertEqual(session["current_stage"]["id"], "natural_materials")
+            self.assertEqual(stage_id, "natural_materials")
+            self.assertEqual(len(session["outputs"]), 6)
+            self.assertEqual(
+                [item["stage_id"] for item in session["outputs"]],
+                [stage_id for stage_id, _ in EXPECTED_INSECT_HOTEL_STAGES],
+            )
+
+            agent_response = self.client.get(f"/api/sessions/{session_id}/dify_agents")
+            self.assertEqual(agent_response.status_code, 200)
+            agents = agent_response.json()["data"]
+            self.assertEqual(
+                [item["id"] for item in agents],
+                [agent_id for _, agent_id in EXPECTED_INSECT_HOTEL_STAGES],
+            )
+            self.assertNotIn("stage_new_questions", [item["id"] for item in agents])
+        finally:
+            self.delete_session(session_id)
+
+    def test_insect_hotel_flow_supports_stage_progression_and_stage_back(self):
+        session_id, stage_id = self.create_session(
+            flow_name="insect_hotel_project",
+            topic="昆虫旅馆",
+        )
+        try:
+            advance_response = self.client.post(
+                f"/api/sessions/{session_id}/chat",
+                json={
+                    "type": "sys_action",
+                    "action": "next_stage",
+                    "final_content": "自然取材阶段定稿",
+                },
+            )
+            self.assertEqual(advance_response.status_code, 200)
+
+            session = self.get_session(session_id)
+            self.assertEqual(session["current_stage_index"], 1)
+            self.assertEqual(session["current_stage"]["id"], "habitat_needs")
+            first_output = next(item for item in session["outputs"] if item["stage_id"] == stage_id)
+            self.assertTrue(first_output["confirmed"])
+            self.assertEqual(first_output["final_content"], "自然取材阶段定稿")
+
+            rollback_response = self.client.post(
+                f"/api/sessions/{session_id}/rollback",
+                json={"steps": 1, "stage_back": True},
+            )
+            self.assertEqual(rollback_response.status_code, 200)
+            rolled_session = rollback_response.json()["data"]["session"]
+            self.assertEqual(rolled_session["current_stage_index"], 0)
+            self.assertEqual(rolled_session["current_stage"]["id"], "natural_materials")
+            rolled_output = next(item for item in rolled_session["outputs"] if item["stage_id"] == stage_id)
+            self.assertFalse(rolled_output["confirmed"])
+            self.assertEqual(rolled_output["final_content"], "")
         finally:
             self.delete_session(session_id)
 

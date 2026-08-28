@@ -52,6 +52,48 @@ STAGE_DIRECTIONS: dict[str, str] = {
         "3. 引导学生思考：同一原理还能在哪里用，条件改变后结论是否变化，哪些判断需要重新测试。\n"
         "4. 让教师把本轮经验沉淀成可复用的方法，而不是只停留在单次课堂结果。"
     ),
+    "insect_material_collection": (
+        "你要帮助教师把昆虫旅馆项目的起点落到真实环境中的自然取材。\n"
+        "1. 引导学生从校园、社区或自然环境中寻找适合搭建昆虫旅馆的天然材料，如枯枝、竹节、松果、落叶、树皮等。\n"
+        "2. 强调先判断材料是否安全、是否适合昆虫栖息，再决定是否收集，避免随意采摘、过度采集或破坏原有微环境。\n"
+        "3. 鼓励学生把取材过程做成有结构的观察记录：材料来源、外形特征、可能用途、是否需要晾晒清理。\n"
+        "4. 帮助教师把“找材料”设计成一次生态友好、证据导向的观察任务，而不是简单收集。 "
+    ),
+    "insect_habitat_needs": (
+        "你要帮助教师判断本地昆虫可能需要怎样的栖息条件，并把观察边界说清楚。\n"
+        "1. 本阶段面向本地昆虫开放观察，不预设单一目标物种，而是根据周边环境判断哪些昆虫更可能被吸引。\n"
+        "2. 引导学生围绕干燥/潮湿、避光/向光、通风、遮挡、高低位置、邻近植物等条件分析栖息需求。\n"
+        "3. 帮助教师明确观察边界：只做非侵扰式观察，不捕捉、不惊扰、不伤害昆虫，也不人为强行引入个体。\n"
+        "4. 让学生把“可能会来哪些昆虫、为什么会来、需要什么环境”整理成可后续验证的判断。 "
+    ),
+    "insect_structure_design": (
+        "你要帮助教师把昆虫旅馆的设计想法整理成可比较、可改进的结构方案。\n"
+        "1. 围绕材料组合、孔洞大小、分层布局、遮雨结构、通风方式、固定方法等提出多个设计选项。\n"
+        "2. 鼓励学生比较不同结构分别更可能吸引哪些本地昆虫，并说明判断依据，而不是只选一个直觉上好看的方案。\n"
+        "3. 帮助教师把设计表达成可验证的猜想，例如不同孔径、不同摆放高度、不同遮挡程度可能带来什么差异。\n"
+        "4. 保持设计低成本、可搭建、可后续优化，为后面的实际搭建和观察留下空间。 "
+    ),
+    "insect_build_and_sensing": (
+        "你要帮助教师把昆虫旅馆的设计落成真实作品，并完成传感强化部署。\n"
+        "1. 引导学生完成结构搭建，明确材料处理、固定方式、摆放位置与安全边界，确保旅馆稳定、适合长期放置。\n"
+        "2. 默认纳入传感强化方案：至少配置温湿度传感器，并可根据条件扩展光照等观测项。\n"
+        "3. 帮助教师说明传感器安装位置、记录频率、供电与防水防晒等实际问题，让数据采集具备可持续性。\n"
+        "4. 强调传感器的作用是辅助理解环境变化与昆虫活动关系，而不是替代现场观察。 "
+    ),
+    "insect_settlement_observation": (
+        "你要帮助教师把昆虫旅馆后的持续观察组织成非侵扰式、证据清楚的记录活动。\n"
+        "1. 重点观察是否有昆虫自然入住、何时活动、活动痕迹如何变化，并与温湿度等环境数据建立对应关系。\n"
+        "2. 强调不打扰、不伤害昆虫，不频繁搬动旅馆，不为了得到结果而人为干预昆虫行为。\n"
+        "3. 引导学生把现场观察、图像记录、传感数据、阶段判断区分开表达，避免把猜测直接当成结论。\n"
+        "4. 帮助教师梳理“看到了什么、记录到了什么、据此能先得出什么阶段性认识”。 "
+    ),
+    "insect_iteration_sharing": (
+        "你要帮助教师把昆虫旅馆项目的观察结果转化为优化改造、展示分享和下一轮问题。\n"
+        "1. 基于入住情况、活动痕迹和传感数据，判断哪些结构、材料或摆放条件值得保留，哪些需要调整。\n"
+        "2. 鼓励学生提出有依据的优化方案，如调整孔径、改变朝向、增加遮挡、替换材料或改进记录方式。\n"
+        "3. 帮助教师把成果表达成可展示、可分享的项目总结，包括设计思路、观察证据、改进判断和生态反思。\n"
+        "4. 保留下一轮继续追问的问题，让项目形成“搭建—观测—优化”的持续迭代闭环。 "
+    ),
 }
 
 
@@ -63,6 +105,12 @@ STAGE_DISPLAY_DIRECTIONS: dict[str, str] = {
     "new_questions": "把异常结果和偏差转化为新的探究机会，继续追问。",
     "conclusion": "基于证据整理阶段性结论，强调条件、边界与可验证性。",
     "extension": "总结探究闭环，迁移到新情境并生成下一轮问题。",
+    "insect_material_collection": "从校园或自然环境寻找合适材料，强调生态友好、适度收集和用途判断。",
+    "insect_habitat_needs": "面向本地昆虫开放观察，分析可能的栖息需求、摆放位置与观察边界。",
+    "insect_structure_design": "比较旅馆结构方案，围绕材料、孔径、分层、遮挡与通风形成可验证设计。",
+    "insect_build_and_sensing": "完成搭建并部署温湿度等传感器，组织可持续的环境数据采集。",
+    "insect_settlement_observation": "在不干扰昆虫的前提下，结合现场观察和传感数据记录自然入住情况。",
+    "insect_iteration_sharing": "根据观察与数据优化旅馆设计，并形成展示分享与下一轮改进问题。",
 }
 
 
@@ -201,6 +249,55 @@ FLOW_TEMPLATES: dict[str, dict[str, Any]] = {
                 expert="学习评价设计师",
                 agent_id="stage_extension",
                 direction_key="extension",
+            ),
+        ],
+    },
+    "insect_hotel_project": {
+        "name": "insect_hotel_project",
+        "display_name": "昆虫旅馆项目探究流",
+        "description": "面向本地昆虫开放观察，结合自然取材、旅馆搭建、传感监测与持续优化。",
+        "stages": [
+            stage_item(
+                id="natural_materials",
+                name="自然取材",
+                expert="情境探寻专家",
+                agent_id="stage_observation_start",
+                direction_key="insect_material_collection",
+            ),
+            stage_item(
+                id="habitat_needs",
+                name="栖息需求判断",
+                expert="问题提炼导师",
+                agent_id="stage_question_refine",
+                direction_key="insect_habitat_needs",
+            ),
+            stage_item(
+                id="structure_design",
+                name="旅馆结构设计",
+                expert="头脑风暴教练",
+                agent_id="stage_hypothesis",
+                direction_key="insect_structure_design",
+            ),
+            stage_item(
+                id="build_and_sensing",
+                name="搭建与传感部署",
+                expert="实验设计专家",
+                agent_id="stage_experiment_design",
+                direction_key="insect_build_and_sensing",
+            ),
+            stage_item(
+                id="settlement_observation",
+                name="自然入住观测",
+                expert="证据链整理师",
+                agent_id="stage_conclusion",
+                direction_key="insect_settlement_observation",
+            ),
+            stage_item(
+                id="iteration_sharing",
+                name="优化改造与分享",
+                expert="探究闭环架构师",
+                agent_id="stage_extension",
+                direction_key="insect_iteration_sharing",
             ),
         ],
     },
