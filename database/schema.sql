@@ -81,6 +81,19 @@ CREATE TABLE IF NOT EXISTS rag_records (
         FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
 );
 
+-- Locally imported curriculum-standard chunks used by BM25 retrieval.
+CREATE TABLE IF NOT EXISTS curriculum_chunks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    source       TEXT NOT NULL,
+    source_index INTEGER NOT NULL,
+    content      TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    CONSTRAINT uq_curriculum_source_index UNIQUE (source, source_index)
+);
+
+CREATE INDEX IF NOT EXISTS ix_curriculum_chunks_source
+    ON curriculum_chunks (source);
+
 -- Independent Dify conversation state for each session and stage agent.
 CREATE TABLE IF NOT EXISTS agent_conversations (
     id              TEXT PRIMARY KEY,

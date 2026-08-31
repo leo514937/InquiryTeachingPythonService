@@ -136,6 +136,20 @@ class RagRecordModel(Base):
     created_at = Column(String, nullable=False)
 
 
+class CurriculumChunkModel(Base):
+    __tablename__ = "curriculum_chunks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String, nullable=False, index=True)
+    source_index = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(String, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("source", "source_index", name="uq_curriculum_source_index"),
+    )
+
+
 class AgentConversationModel(Base):
     __tablename__ = "agent_conversations"
 

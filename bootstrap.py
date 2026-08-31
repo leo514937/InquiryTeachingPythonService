@@ -120,6 +120,20 @@ def init_database() -> None:
         )
         """,
         """
+        CREATE TABLE IF NOT EXISTS curriculum_chunks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            source_index INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(source, source_index)
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_curriculum_chunks_source
+        ON curriculum_chunks (source)
+        """,
+        """
         CREATE TABLE IF NOT EXISTS agent_conversations (
             id TEXT PRIMARY KEY,
             session_id TEXT NOT NULL,

@@ -36,6 +36,32 @@ class Settings:
     upload_max_files_per_session: int = int(os.getenv("UPLOAD_MAX_FILES_PER_SESSION", "10"))
     upload_max_total_chars: int = int(os.getenv("UPLOAD_MAX_TOTAL_CHARS", "50000"))
 
+    curriculum_dir: Path = Path(
+        os.getenv("CURRICULUM_DIR", str(BASE_DIR / "data" / "curriculum"))
+    ).resolve()
+    curriculum_rag_enabled: bool = os.getenv(
+        "CURRICULUM_RAG_ENABLED",
+        "true",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    curriculum_top_k: int = max(1, int(os.getenv("CURRICULUM_TOP_K", "4")))
+    curriculum_candidate_k: int = max(
+        curriculum_top_k,
+        int(os.getenv("CURRICULUM_CANDIDATE_K", "16")),
+    )
+    curriculum_chunk_size: int = max(128, int(os.getenv("CURRICULUM_CHUNK_SIZE", "512")))
+    curriculum_chunk_overlap: int = max(
+        0,
+        int(os.getenv("CURRICULUM_CHUNK_OVERLAP", "64")),
+    )
+    curriculum_rerank_enabled: bool = os.getenv(
+        "CURRICULUM_RERANK_ENABLED",
+        "true",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    curriculum_vector_enabled: bool = os.getenv(
+        "CURRICULUM_VECTOR_ENABLED",
+        "false",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_api_base: str = os.getenv("LLM_API_BASE", "https://api.openai.com/v1")
     llm_model: str = os.getenv("LLM_MODEL", "gpt-4o-mini")

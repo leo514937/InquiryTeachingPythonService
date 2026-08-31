@@ -73,6 +73,32 @@ GET  /api/sessions/{session_id}/export
 
 会话参考资料支持 `PDF`、`DOCX`、`TXT` 和 `MD`。上传成功后，系统会提取全文并自动加入当前会话后续的主导师、阶段专家和草案 Agent 上下文。默认限制为单文件 10 MB、每个会话 10 个文件、可用正文总计 50,000 字符；扫描版 PDF 暂不支持 OCR。
 
+## 本地课标 BM25 RAG
+
+将权威课标文件放入 `data/curriculum/`，支持 `MD`、`TXT`、`PDF` 和 `DOCX`。扫描版 PDF 暂不支持 OCR。执行以下命令导入：
+
+```powershell
+cd E:\InquiryTeachingPythonService
+.\.venv\Scripts\python.exe scripts\ingest_curriculum.py data\curriculum
+```
+
+导入命令会递归读取目录、切分正文并写入本地 `curriculum_chunks` 表。同一路径的文件重复导入时会替换旧片段。聊天时系统自动使用 BM25 检索相关课标，将命中内容作为年龄特点、技术水平、任务难度、安全边界和评价方式的参考，并在回答末尾简要显示来源。完整命中片段保存在 `rag_records` 中。
+
+默认配置如下，可在 `.env` 中覆盖：
+
+```text
+CURRICULUM_DIR=./data/curriculum
+CURRICULUM_RAG_ENABLED=true
+CURRICULUM_TOP_K=4
+CURRICULUM_CANDIDATE_K=16
+CURRICULUM_CHUNK_SIZE=512
+CURRICULUM_CHUNK_OVERLAP=64
+CURRICULUM_RERANK_ENABLED=true
+CURRICULUM_VECTOR_ENABLED=false
+```
+
+`CURRICULUM_VECTOR_ENABLED` 是后续向量检索的预留开关，当前版本只使用本地 BM25。知识库为空、检索关闭或检索失败时，原有聊天流程继续运行。
+
 ## 快速请求示例
 
 创建会话：

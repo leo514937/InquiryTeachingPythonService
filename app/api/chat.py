@@ -13,6 +13,7 @@ from app.db.models import (
     AgentConversationModel,
     ChatTurnModel,
     MessageModel,
+    RagRecordModel,
     SessionModel,
     StageOutputModel,
     UserModel,
@@ -29,6 +30,7 @@ from app.services.draft_proposal_service import DraftProposalService
 from app.services.draft_target_resolver import DraftTarget, DraftTargetResolver
 from app.services.llm_service import LLMService
 from app.services.prompt_service import PromptService
+from app.services.rag_service import RagService
 from app.services.session_access_service import get_owned_session
 from app.workflow.flows import get_flow
 
@@ -125,6 +127,7 @@ def save_chat_result(
     draft_agent_id: str = "draft_agent",
     draft_content: str = "",
     update_stage_output: bool = False,
+    rag_record: dict | None = None,
 ) -> dict:
     db = SessionLocal()
     try:
@@ -216,6 +219,21 @@ def save_chat_result(
             output.draft_content = draft_content
             output.updated_at = main_timestamp
 
+        rag_record_id = None
+        if rag_record is not None:
+            rag_record_id = new_id("rag")
+            db.add(
+                RagRecordModel(
+                    id=rag_record_id,
+                    session_id=session_id,
+                    stage_id=stage_id,
+                    query=rag_record.get("query", ""),
+                    context=rag_record.get("context", ""),
+                    source_json=RagService.source_json(rag_record.get("source", {})),
+                    created_at=main_timestamp,
+                )
+            )
+
         db.add(
             ChatTurnModel(
                 turn_id=turn_id,
@@ -224,7 +242,7 @@ def save_chat_result(
                 user_message_id=user_msg_id,
                 expert_message_id=expert_msg_id,
                 assistant_message_id=assistant_message_id or expert_msg_id or main_msg_id or user_msg_id,
-                rag_record_id=None,
+                rag_record_id=rag_record_id,
                 draft_before=draft_before,
                 draft_after=draft_after,
                 created_at=main_timestamp,
@@ -244,6 +262,7 @@ def save_chat_result(
             "assistant_message_id": assistant_message_id or expert_msg_id or main_msg_id,
             "assistant_message_type": assistant_message_type,
             "assistant_message_agent_id": assistant_message_agent_id,
+            "rag_record_id": rag_record_id,
         }
     finally:
         db.close()
@@ -373,7 +392,15 @@ async def chat(
     dialog_history = ContextService.format_dialog_history(all_messages)
     llm_history = ContextService.to_llm_history(all_messages)
     current_draft = stage_output.draft_content if stage_output else ""
-    doc_input = ContextService.build_doc_input(db, session_id, stage["id"])
+    base_doc_input = ContextService.build_doc_input(db, session_id, stage["id"])
+    curriculum_context, curriculum_source = RagService.retrieve_curriculum_context(
+        db,
+        topic=sess.topic,
+        stage=stage,
+        user_message=payload.message,
+    )
+    doc_input = RagService.merge_context(base_doc_input, curriculum_context)
+    curriculum_sources = RagService.curriculum_sources(curriculum_source)
     stage_agent_id = stage["agent_id"]
     stage_agent = DifyAgentService.find_agent(stage_agent_id, sess.flow_name)
     conversation_id = get_agent_conversation_id(db, session_id, stage_agent_id)
@@ -390,6 +417,12 @@ async def chat(
         "dialog_history": dialog_history,
         "llm_history": llm_history,
         "doc_input": doc_input,
+        "rag_record": {
+            "query": curriculum_source.get("query", ""),
+            "context": curriculum_context,
+            "source": curriculum_source,
+        },
+        "rag_sources": curriculum_sources,
         "selection_text": get_selection_text(payload),
     }
 
@@ -731,6 +764,33 @@ async def chat(
             )
 
         await ensure_chat_active()
+        source_note = RagService.source_note(session_snapshot["rag_sources"])
+        if source_note:
+            if chat_mode == SUBAGENT_MODE:
+                expert_text += source_note
+                yield format_sse(
+                    "delta",
+                    {
+                        "text": source_note,
+                        "agent_id": stage_agent_id,
+                        "agent_name": stage["expert"],
+                        "message_type": "stage_expert",
+                    },
+                )
+            else:
+                main_text += source_note
+                if not session_snapshot["draft_mode_enabled"]:
+                    yield format_sse(
+                        "delta",
+                        {
+                            "text": source_note,
+                            "agent_id": "main_agent",
+                            "agent_name": "流程引导Agent",
+                            "message_type": "main_tutor",
+                        },
+                    )
+
+        await ensure_chat_active()
         message_ids = save_chat_result(
             session_id=session_id,
             stage_id=stage["id"],
@@ -742,6 +802,7 @@ async def chat(
             draft_agent_id="draft_agent",
             draft_content=final_draft if session_snapshot["draft_mode_enabled"] else "",
             update_stage_output=persist_draft_directly,
+            rag_record=session_snapshot["rag_record"],
         )
         yield format_sse(
             "done",
@@ -760,6 +821,7 @@ async def chat(
                 "warning": None,
                 "chat_mode": chat_mode,
                 "draft_mode_enabled": session_snapshot["draft_mode_enabled"],
+                "rag_sources": session_snapshot["rag_sources"],
                 "request_id": request_id,
             },
         )

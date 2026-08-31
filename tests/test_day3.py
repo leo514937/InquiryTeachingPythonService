@@ -38,6 +38,7 @@ from app.db.models import (
     AgentConversationModel,
     AppSettingModel,
     ChatTurnModel,
+    CurriculumChunkModel,
     DraftProposalModel,
     MessageModel,
     RagRecordModel,
@@ -48,6 +49,7 @@ from app.main import app
 from app.services.auth_service import register_user
 from app.services.chat_interrupt_service import chat_interruptions
 from app.services.context_service import ContextService
+from app.services.curriculum_knowledge_service import CurriculumKnowledgeService
 from app.services.prompt_service import PromptService
 from app.services.session_file_service import SessionFileService
 from app.workflow.flows import get_flow
@@ -657,11 +659,12 @@ class AgentArchitectureApiTests(unittest.TestCase):
                     .one()
                 )
                 self.assertFalse(turn.expert_message_id)
+                self.assertTrue(turn.rag_record_id)
                 self.assertEqual(
                     db.query(RagRecordModel)
                     .filter(RagRecordModel.session_id == session_id)
                     .count(),
-                    0,
+                    1,
                 )
                 self.assertEqual(
                     db.query(AgentConversationModel)
@@ -671,6 +674,120 @@ class AgentArchitectureApiTests(unittest.TestCase):
                 )
         finally:
             self.delete_session(session_id)
+
+    def test_curriculum_files_ingest_idempotently_and_retrieve_with_bm25(self):
+        source = f"小学信息科技课标_{uuid.uuid4().hex}.md"
+        wrong_level_source = f"初中信息科技课标_{uuid.uuid4().hex}.md"
+        curriculum_dir = TEST_DIR / f"curriculum_{uuid.uuid4().hex}"
+        curriculum_dir.mkdir(parents=True, exist_ok=True)
+        markdown_path = curriculum_dir / source
+        markdown_path.write_text(
+            "小学三年级学生以直观体验为主，人工智能活动应采用图形化工具，控制任务难度。",
+            encoding="utf-8",
+        )
+        try:
+            with SessionLocal() as db:
+                service = CurriculumKnowledgeService(db)
+                first_count = service.ingest_file(markdown_path, source=source)
+                db.commit()
+                self.assertGreater(first_count, 0)
+
+                markdown_path.write_text(
+                    "小学三年级学生适合图形化人工智能活动，并应设置清晰的安全边界与过程评价。",
+                    encoding="utf-8",
+                )
+                second_count = service.ingest_file(markdown_path, source=source)
+                db.commit()
+                stored = (
+                    db.query(CurriculumChunkModel)
+                    .filter(CurriculumChunkModel.source == source)
+                    .all()
+                )
+                self.assertEqual(len(stored), second_count)
+                self.assertTrue(all("直观体验为主" not in item.content for item in stored))
+
+                service.ingest(
+                    wrong_level_source,
+                    "初中七年级学生可以使用 Python 编程完成复杂的人工智能模型训练活动。",
+                )
+                db.commit()
+
+                results = service.retrieve("小学三年级人工智能活动的安全与评价", top_k=2)
+                self.assertTrue(results)
+                self.assertEqual(results[0].source, source)
+                self.assertIn("安全边界", results[0].content)
+                self.assertNotIn(wrong_level_source, [item.source for item in results])
+        finally:
+            with SessionLocal() as db:
+                db.query(CurriculumChunkModel).filter(
+                    CurriculumChunkModel.source.in_([source, wrong_level_source])
+                ).delete(synchronize_session=False)
+                db.commit()
+            shutil.rmtree(curriculum_dir, ignore_errors=True)
+
+    def test_curriculum_parser_supports_txt_pdf_and_docx(self):
+        curriculum_dir = TEST_DIR / f"curriculum_formats_{uuid.uuid4().hex}"
+        curriculum_dir.mkdir(parents=True, exist_ok=True)
+        text_path = curriculum_dir / "standard.txt"
+        pdf_path = curriculum_dir / "standard.pdf"
+        docx_path = curriculum_dir / "standard.docx"
+        text_path.write_text("TXT_CURRICULUM_MARKER", encoding="utf-8")
+        pdf_path.write_bytes(make_text_pdf("PDF_CURRICULUM_MARKER"))
+        docx_path.write_bytes(make_docx())
+        try:
+            self.assertIn(
+                "TXT_CURRICULUM_MARKER",
+                CurriculumKnowledgeService.extract_text(text_path),
+            )
+            self.assertIn(
+                "PDF_CURRICULUM_MARKER",
+                CurriculumKnowledgeService.extract_text(pdf_path),
+            )
+            docx_text = CurriculumKnowledgeService.extract_text(docx_path)
+            self.assertIn("DOCX_PARAGRAPH_MARKER", docx_text)
+            self.assertIn("DOCX_TABLE_LEFT", docx_text)
+        finally:
+            shutil.rmtree(curriculum_dir, ignore_errors=True)
+
+    def test_chat_injects_curriculum_reference_and_persists_sources(self):
+        source = f"小学信息科技课标_{uuid.uuid4().hex}.md"
+        with SessionLocal() as db:
+            CurriculumKnowledgeService(db).ingest(
+                source,
+                "小学三年级学生适合使用图形化工具体验人工智能，任务步骤应简短，并设置安全边界。",
+            )
+            db.commit()
+
+        session_id, _ = self.create_session(topic="小学三年级人工智能")
+        try:
+            _, events = self.stream_chat(session_id, "设计一个适合小学三年级的人工智能活动")
+            done = next(data for name, data in events if name == "done")
+            self.assertEqual(done["rag_sources"], [source])
+            self.assertTrue(done["rag_record_id"])
+
+            messages = self.get_messages(session_id)
+            self.assertIn(f"参考课标：{source}", messages[-1]["content"])
+
+            with SessionLocal() as db:
+                turn = (
+                    db.query(ChatTurnModel)
+                    .filter(ChatTurnModel.session_id == session_id)
+                    .one()
+                )
+                record = db.query(RagRecordModel).filter(
+                    RagRecordModel.id == turn.rag_record_id
+                ).one()
+                self.assertIn("<curriculum_reference>", record.context)
+                metadata = json.loads(record.source_json)
+                self.assertEqual(metadata["mode"], "local_bm25")
+                self.assertEqual(metadata["records"][0]["source"], source)
+        finally:
+            self.delete_session(session_id)
+            with SessionLocal() as db:
+                db.query(CurriculumChunkModel).filter(
+                    CurriculumChunkModel.source == source
+                ).delete(synchronize_session=False)
+                db.commit()
 
     def test_chat_cancel_endpoint_marks_active_stream_as_cancelled(self):
         session_id, _ = self.create_session()
