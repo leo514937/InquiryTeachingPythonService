@@ -2,6 +2,7 @@ import type {
   DifyAgentItem,
   AuthUser,
   ChatMode,
+  CurriculumFileItem,
   DraftProposal,
   DraftSelection,
   FlowInfo,
@@ -116,6 +117,24 @@ export async function registerUser(username: string, password: string): Promise<
 
 export async function loginUser(username: string, password: string): Promise<AuthUser> {
   const payload = await readJson<ApiEnvelope<AuthUser>>(`${API_BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  return payload.data;
+}
+
+export async function registerAdmin(username: string, password: string): Promise<AuthUser> {
+  const payload = await readJson<ApiEnvelope<AuthUser>>(`${API_BASE}/api/auth/admin/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  return payload.data;
+}
+
+export async function loginAdmin(username: string, password: string): Promise<AuthUser> {
+  const payload = await readJson<ApiEnvelope<AuthUser>>(`${API_BASE}/api/auth/admin/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
@@ -295,6 +314,28 @@ export async function streamChat(
       await dispatch(eventName, dataLines.join("\n"));
     }
   }
+}
+
+export async function getCurriculumFiles(): Promise<CurriculumFileItem[]> {
+  const payload = await readJson<ApiEnvelope<CurriculumFileItem[]>>(`${API_BASE}/api/curriculum/files`);
+  return payload.data || [];
+}
+
+export async function uploadCurriculumFile(file: File): Promise<CurriculumFileItem> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const payload = await readJson<ApiEnvelope<CurriculumFileItem>>(`${API_BASE}/api/curriculum/files`, {
+    method: "POST",
+    body: formData,
+  });
+  return payload.data;
+}
+
+export async function deleteCurriculumFile(source: string): Promise<void> {
+  await readJson<ApiEnvelope<null>>(
+    `${API_BASE}/api/curriculum/files?source=${encodeURIComponent(source)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function cancelChat(sessionId: string, requestId: string): Promise<boolean> {

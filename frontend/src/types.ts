@@ -12,6 +12,14 @@ export type AuthUser = {
   id: string;
   username: string;
   chat_mode: ChatMode;
+  is_admin: boolean;
+};
+
+export type CurriculumFileItem = {
+  source: string;
+  extension: string;
+  chunk_count: number;
+  updated_at: string;
 };
 
 export type FlowInfo = {

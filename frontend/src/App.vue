@@ -45,7 +45,8 @@
         <div class="session-selector-panel">
           <div class="selector-row">
             <label>当前会话</label>
-            <select :value="selectedSessionId" :disabled="isUploadingFile" @change="e => selectSession((e.target as HTMLSelectElement).value)" class="input compact">
+            <select :value="selectedSessionId" :disabled="isUploadingFile || sessions.length === 0" @change="e => selectSession((e.target as HTMLSelectElement).value)" class="input compact">
+              <option v-if="sessions.length === 0" value="">暂无会话</option>
               <option v-for="item in sessions" :key="item.id" :value="item.id">
                 {{ item.topic }} · {{ item.flow_display_name }}
               </option>
@@ -272,6 +273,16 @@
                   <LoaderCircle v-if="isUploadingFile" class="spin-icon" :size="18" />
                   <Paperclip v-else :size="18" />
                   <span v-if="sessionFiles.length" class="composer-upload-count">{{ sessionFiles.length }}</span>
+                </button>
+                <button
+                  class="icon-button composer-upload-button curriculum-button"
+                  type="button"
+                  aria-label="课标知识库"
+                  title="课标知识库"
+                  @click="openCurriculumPanel"
+                >
+                  <BookOpen :size="18" />
+                  <span v-if="curriculumFiles.length" class="composer-upload-count">{{ curriculumFiles.length }}</span>
                 </button>
                 <input
                   ref="fileInputRef"
@@ -550,6 +561,86 @@
       </div>
     </div>
 
+    <div v-if="showCurriculumModal" class="modal-overlay" @click.self="showCurriculumModal = false">
+      <section class="modal-content curriculum-modal glass" role="dialog" aria-modal="true" aria-labelledby="curriculum-title">
+        <div class="curriculum-modal-head">
+          <div>
+            <h3 id="curriculum-title">课标知识库</h3>
+            <p>{{ currentUser?.is_admin ? "管理员管理" : "只读查看" }} · {{ curriculumFiles.length }} 个文件 · {{ curriculumTotalChunks }} 个片段</p>
+          </div>
+          <button class="icon-button compact" type="button" title="关闭" aria-label="关闭课标知识库" @click="showCurriculumModal = false">
+            <X :size="18" />
+          </button>
+        </div>
+
+        <button
+          v-if="currentUser?.is_admin"
+          class="curriculum-dropzone"
+          type="button"
+          :disabled="isUploadingCurriculum"
+          @click="openCurriculumFilePicker"
+          @dragover.prevent
+          @drop.prevent="handleCurriculumDrop"
+        >
+          <LoaderCircle v-if="isUploadingCurriculum" class="spin-icon" :size="22" />
+          <Upload v-else :size="22" />
+          <strong>{{ isUploadingCurriculum ? "正在导入课标" : "上传课标" }}</strong>
+          <span>PDF / DOCX / TXT / MD，单文件最大 20 MB</span>
+        </button>
+        <input
+          v-if="currentUser?.is_admin"
+          ref="curriculumFileInputRef"
+          class="visually-hidden"
+          type="file"
+          multiple
+          accept=".pdf,.docx,.txt,.md"
+          @change="handleCurriculumFileSelection"
+        />
+
+        <div v-if="curriculumUploadResults.length" class="curriculum-upload-results" aria-live="polite">
+          <span
+            v-for="result in curriculumUploadResults"
+            :key="result.name"
+            :class="`status-${result.status}`"
+            :title="result.message"
+          >
+            {{ result.name }} · {{ result.status === "pending" ? "等待" : result.status === "success" ? "完成" : "失败" }}
+          </span>
+        </div>
+        <p v-if="curriculumError" class="curriculum-error" role="alert">{{ curriculumError }}</p>
+
+        <div v-if="isLoadingCurriculum" class="curriculum-empty">
+          <LoaderCircle class="spin-icon" :size="20" />
+          <span>正在读取课标列表</span>
+        </div>
+        <div v-else-if="curriculumFiles.length" class="curriculum-file-list">
+          <div v-for="item in curriculumFiles" :key="item.source" class="curriculum-file-row">
+            <div class="curriculum-file-icon" aria-hidden="true"><FileText :size="20" /></div>
+            <div class="curriculum-file-copy">
+              <strong :title="item.source">{{ item.source }}</strong>
+              <span>{{ item.extension.replace('.', '').toUpperCase() }} · {{ item.chunk_count }} 个片段 · {{ formatCurriculumDate(item.updated_at) }}</span>
+            </div>
+            <button
+              v-if="currentUser?.is_admin"
+              class="reference-delete-button"
+              type="button"
+              :disabled="deletingCurriculumSources.includes(item.source) || isUploadingCurriculum"
+              :title="`删除 ${item.source}`"
+              :aria-label="`删除 ${item.source}`"
+              @click="removeCurriculumSource(item)"
+            >
+              <LoaderCircle v-if="deletingCurriculumSources.includes(item.source)" class="spin-icon" :size="14" />
+              <X v-else :size="18" />
+            </button>
+          </div>
+        </div>
+        <div v-else class="curriculum-empty">
+          <BookOpen :size="24" />
+          <span>当前还没有导入课标</span>
+        </div>
+      </section>
+    </div>
+
     <!-- New Session Modal -->
     <div v-if="showNewSessionModal" class="modal-overlay" @click.self="showNewSessionModal = false">
       <div class="modal-content glass">
@@ -584,9 +675,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import AuthPanel from "@/components/AuthPanel.vue";
-import { FileText, LoaderCircle, Paperclip, X } from "lucide-vue-next";
+import { BookOpen, FileText, LoaderCircle, Paperclip, Upload, X } from "lucide-vue-next";
 import {
   createSession,
+  deleteCurriculumFile,
   deleteSession,
   deleteSessionFile,
   applyDraftProposalActions,
@@ -594,6 +686,7 @@ import {
   getDraftProposal,
   getChatMode,
   getCurrentUser,
+  getCurriculumFiles,
   exportSession,
   getFlows,
   getMessages,
@@ -606,11 +699,13 @@ import {
   setDraftMode,
   setChatMode,
   streamChat,
+  uploadCurriculumFile,
   uploadSessionFile,
 } from "@/api";
 import type {
   AuthUser,
   ChatMode,
+  CurriculumFileItem,
   DraftProposal,
   DraftSelection,
   DraftProposalSegment,
@@ -631,6 +726,7 @@ const currentSession = ref<SessionDetail | null>(null);
 const messages = ref<MessageItem[]>([]);
 const newSessionFlowName = ref("inquiry_7_stage");
 const sessionFiles = ref<SessionFileItem[]>([]);
+const curriculumFiles = ref<CurriculumFileItem[]>([]);
 const selectedSessionId = ref("");
 const selectedStageId = ref("");
 const topicInput = ref("光的反射");
@@ -654,6 +750,7 @@ const rightSidebarVisible = ref(true);
 const feedRef = ref<HTMLElement | null>(null);
 const chatInputRef = ref<HTMLTextAreaElement | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
+const curriculumFileInputRef = ref<HTMLInputElement | null>(null);
 const draftEditorRef = ref<HTMLTextAreaElement | null>(null);
 const reviewPreviewRef = ref<HTMLElement | null>(null);
 const showDraftReviewOverlay = ref(false);
@@ -666,6 +763,16 @@ const attachedChatSelectionLabel = ref("");
 const isUploadingFile = ref(false);
 const deletingFileIds = ref<string[]>([]);
 const fileOperationError = ref("");
+const showCurriculumModal = ref(false);
+const isLoadingCurriculum = ref(false);
+const isUploadingCurriculum = ref(false);
+const deletingCurriculumSources = ref<string[]>([]);
+const curriculumError = ref("");
+const curriculumUploadResults = ref<Array<{
+  name: string;
+  status: "pending" | "success" | "failed";
+  message: string;
+}>>([]);
 const currentDraftCursorLine = ref(1);
 const draftEditorScrollTop = ref(0);
 const draftEditorMeasureWidth = ref(0);
@@ -753,6 +860,9 @@ const progressPercentage = computed(() => {
 });
 
 const isDraftMode = computed(() => Boolean(currentSession.value?.draft_mode_enabled));
+const curriculumTotalChunks = computed(() =>
+  curriculumFiles.value.reduce((total, item) => total + item.chunk_count, 0),
+);
 
 const visibleDraftSegments = computed(() => {
   return draftProposal.value?.segments.filter((segment) => segment.kind !== "equal") || [];
@@ -1182,7 +1292,7 @@ async function refreshWorkspace() {
 
 async function handleAuthenticated(user: AuthUser) {
   currentUser.value = user;
-  await refreshWorkspace();
+  await Promise.all([refreshWorkspace(), refreshCurriculumFiles()]);
   if (sessions.value[0]) {
     await loadSession(sessions.value[0].id, true);
   }
@@ -1201,6 +1311,8 @@ async function logout() {
     selectedSessionId.value = "";
     selectedStageId.value = "";
     messages.value = [];
+    curriculumFiles.value = [];
+    showCurriculumModal.value = false;
     draftContent.value = "";
     draftProposal.value = null;
     draftStreamingContent.value = "";
@@ -1243,6 +1355,108 @@ function openFilePicker() {
     return;
   }
   fileInputRef.value?.click();
+}
+
+async function refreshCurriculumFiles() {
+  isLoadingCurriculum.value = true;
+  curriculumError.value = "";
+  try {
+    curriculumFiles.value = await getCurriculumFiles();
+  } catch (error: any) {
+    curriculumError.value = error.message || String(error);
+  } finally {
+    isLoadingCurriculum.value = false;
+  }
+}
+
+async function openCurriculumPanel() {
+  showCurriculumModal.value = true;
+  curriculumUploadResults.value = [];
+  await refreshCurriculumFiles();
+}
+
+function openCurriculumFilePicker() {
+  if (!currentUser.value?.is_admin || isUploadingCurriculum.value) {
+    return;
+  }
+  curriculumFileInputRef.value?.click();
+}
+
+async function importCurriculumFiles(files: File[]) {
+  if (!currentUser.value?.is_admin || !files.length || isUploadingCurriculum.value) {
+    return;
+  }
+  isUploadingCurriculum.value = true;
+  curriculumError.value = "";
+  curriculumUploadResults.value = files.map((file) => ({
+    name: file.name,
+    status: "pending",
+    message: "",
+  }));
+  const errors: string[] = [];
+  try {
+    for (const file of files) {
+      try {
+        const uploaded = await uploadCurriculumFile(file);
+        curriculumFiles.value = [
+          uploaded,
+          ...curriculumFiles.value.filter((item) => item.source !== uploaded.source),
+        ];
+        curriculumUploadResults.value = curriculumUploadResults.value.map((item) =>
+          item.name === file.name ? { ...item, status: "success", message: "导入完成" } : item,
+        );
+      } catch (error: any) {
+        const message = error.message || String(error);
+        errors.push(`${file.name}：${message}`);
+        curriculumUploadResults.value = curriculumUploadResults.value.map((item) =>
+          item.name === file.name ? { ...item, status: "failed", message } : item,
+        );
+      }
+    }
+  } finally {
+    isUploadingCurriculum.value = false;
+  }
+  curriculumError.value = errors.join("；");
+  statusText.value = errors.length ? "部分课标导入失败" : `已导入 ${files.length} 个课标文件`;
+}
+
+async function handleCurriculumFileSelection(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files || []);
+  input.value = "";
+  await importCurriculumFiles(files);
+}
+
+async function handleCurriculumDrop(event: DragEvent) {
+  await importCurriculumFiles(Array.from(event.dataTransfer?.files || []));
+}
+
+async function removeCurriculumSource(item: CurriculumFileItem) {
+  if (!currentUser.value?.is_admin || isUploadingCurriculum.value) {
+    return;
+  }
+  if (!confirm(`确认删除课标《${item.source}》吗？删除后将不再参与检索。`)) {
+    return;
+  }
+  deletingCurriculumSources.value = [...deletingCurriculumSources.value, item.source];
+  curriculumError.value = "";
+  try {
+    await deleteCurriculumFile(item.source);
+    curriculumFiles.value = curriculumFiles.value.filter((file) => file.source !== item.source);
+    statusText.value = `已删除课标：${item.source}`;
+  } catch (error: any) {
+    curriculumError.value = error.message || String(error);
+  } finally {
+    deletingCurriculumSources.value = deletingCurriculumSources.value.filter(
+      (source) => source !== item.source,
+    );
+  }
+}
+
+function formatCurriculumDate(value: string) {
+  if (!value) return "时间未知";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false });
 }
 
 function fileStatusLabel(item: SessionFileItem): string {

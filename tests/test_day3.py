@@ -324,6 +324,7 @@ class AgentArchitectureApiTests(unittest.TestCase):
             )
             self.assertEqual(registered.status_code, 200)
             self.assertEqual(registered.json()["data"]["username"], username)
+            self.assertFalse(registered.json()["data"]["is_admin"])
             self.assertEqual(client.get("/api/auth/me").status_code, 200)
 
             duplicate = client.post(
@@ -371,6 +372,162 @@ class AgentArchitectureApiTests(unittest.TestCase):
                 )
         finally:
             client.close()
+
+    def test_admin_channels_and_curriculum_file_permissions(self):
+        ordinary_client = TestClient(app)
+        admin_client = TestClient(app)
+        disabled_client = TestClient(app)
+        ordinary_username = f"ordinary_{uuid.uuid4().hex[:8]}"
+        admin_username = f"admin_{uuid.uuid4().hex[:8]}"
+        password = "valid-password-123"
+        sources = [
+            f"小学课标_{uuid.uuid4().hex}.md",
+            f"课标表格_{uuid.uuid4().hex}.docx",
+            f"课标文档_{uuid.uuid4().hex}.pdf",
+        ]
+        try:
+            ordinary_registered = ordinary_client.post(
+                "/api/auth/register",
+                json={"username": ordinary_username, "password": password},
+            )
+            self.assertEqual(ordinary_registered.status_code, 200)
+            self.assertFalse(ordinary_registered.json()["data"]["is_admin"])
+
+            admin_registered = admin_client.post(
+                "/api/auth/admin/register",
+                json={"username": admin_username, "password": password},
+            )
+            self.assertEqual(admin_registered.status_code, 200)
+            self.assertTrue(admin_registered.json()["data"]["is_admin"])
+
+            admin_client.post("/api/auth/logout")
+            self.assertEqual(
+                admin_client.post(
+                    "/api/auth/login",
+                    json={"username": admin_username, "password": password},
+                ).status_code,
+                401,
+            )
+            self.assertEqual(
+                admin_client.post(
+                    "/api/auth/admin/login",
+                    json={"username": admin_username, "password": password},
+                ).status_code,
+                200,
+            )
+
+            ordinary_client.post("/api/auth/logout")
+            self.assertEqual(
+                ordinary_client.post(
+                    "/api/auth/admin/login",
+                    json={"username": ordinary_username, "password": password},
+                ).status_code,
+                401,
+            )
+            self.assertEqual(
+                ordinary_client.post(
+                    "/api/auth/login",
+                    json={"username": ordinary_username, "password": password},
+                ).status_code,
+                200,
+            )
+
+            with patch.object(get_settings(), "admin_registration_enabled", False):
+                disabled = disabled_client.post(
+                    "/api/auth/admin/register",
+                    json={
+                        "username": f"disabled_{uuid.uuid4().hex[:8]}",
+                        "password": password,
+                    },
+                )
+            self.assertEqual(disabled.status_code, 403)
+
+            self.assertEqual(ordinary_client.get("/api/curriculum/files").status_code, 200)
+            denied_upload = ordinary_client.post(
+                "/api/curriculum/files",
+                files={"file": (sources[0], b"ordinary cannot upload", "text/markdown")},
+            )
+            self.assertEqual(denied_upload.status_code, 403)
+
+            uploads = [
+                (sources[0], "小学三年级人工智能活动应使用图形化工具。".encode("utf-8"), "text/markdown"),
+                (
+                    sources[1],
+                    make_docx(),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
+                (sources[2], make_text_pdf("CURRICULUM_API_PDF"), "application/pdf"),
+            ]
+            for name, data, content_type in uploads:
+                uploaded = admin_client.post(
+                    "/api/curriculum/files",
+                    files={"file": (name, data, content_type)},
+                )
+                self.assertEqual(uploaded.status_code, 200, uploaded.text)
+                self.assertEqual(uploaded.json()["data"]["source"], name)
+                self.assertGreater(uploaded.json()["data"]["chunk_count"], 0)
+
+            replaced = admin_client.post(
+                "/api/curriculum/files",
+                files={
+                    "file": (
+                        sources[0],
+                        "小学三年级活动需要过程评价与安全边界。".encode("utf-8"),
+                        "text/markdown",
+                    )
+                },
+            )
+            self.assertEqual(replaced.status_code, 200)
+            with SessionLocal() as db:
+                markdown_chunks = (
+                    db.query(CurriculumChunkModel)
+                    .filter(CurriculumChunkModel.source == sources[0])
+                    .all()
+                )
+                self.assertTrue(markdown_chunks)
+                self.assertTrue(all("图形化工具" not in row.content for row in markdown_chunks))
+
+            failed_replacement = admin_client.post(
+                "/api/curriculum/files",
+                files={"file": (sources[1], b"not-a-docx", "application/octet-stream")},
+            )
+            self.assertEqual(failed_replacement.status_code, 400)
+            with SessionLocal() as db:
+                self.assertGreater(
+                    db.query(CurriculumChunkModel)
+                    .filter(CurriculumChunkModel.source == sources[1])
+                    .count(),
+                    0,
+                )
+
+            ordinary_sources = {
+                item["source"]
+                for item in ordinary_client.get("/api/curriculum/files").json()["data"]
+            }
+            self.assertTrue(set(sources).issubset(ordinary_sources))
+            self.assertEqual(
+                ordinary_client.delete(
+                    "/api/curriculum/files",
+                    params={"source": sources[0]},
+                ).status_code,
+                403,
+            )
+
+            for source in sources:
+                deleted = admin_client.delete(
+                    "/api/curriculum/files",
+                    params={"source": source},
+                )
+                self.assertEqual(deleted.status_code, 200)
+        finally:
+            with SessionLocal() as db:
+                db.query(CurriculumChunkModel).filter(
+                    CurriculumChunkModel.source.in_(sources)
+                ).delete(synchronize_session=False)
+                db.commit()
+            ordinary_client.close()
+            admin_client.close()
+            disabled_client.close()
 
     def test_first_registration_claims_legacy_sessions_and_chat_mode(self):
         database_path = TEST_DIR / f"legacy-{uuid.uuid4().hex}.db"

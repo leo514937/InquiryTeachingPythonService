@@ -31,3 +31,10 @@ def ensure_schema_compatibility() -> None:
                     "ON sessions (owner_user_id)"
                 )
             )
+
+        if "users" in table_names:
+            user_columns = {column["name"] for column in inspector.get_columns("users")}
+            if "is_admin" not in user_columns:
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+                )

@@ -33,6 +33,7 @@ class UserModel(Base):
     username = Column(String, nullable=False, unique=True, index=True)
     password_hash = Column(Text, nullable=False)
     chat_mode = Column(String, nullable=False, default="main")
+    is_admin = Column(Integer, nullable=False, default=0)
     created_at = Column(String, nullable=False)
 
 

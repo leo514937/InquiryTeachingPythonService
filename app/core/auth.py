@@ -17,3 +17,12 @@ def get_current_user(
             detail="请先登录",
         )
     return user
+
+
+def get_admin_user(user: UserModel = Depends(get_current_user)) -> UserModel:
+    if not bool(user.is_admin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="仅管理员可以执行此操作",
+        )
+    return user

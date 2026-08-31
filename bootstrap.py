@@ -53,6 +53,7 @@ def init_database() -> None:
             username TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             chat_mode TEXT NOT NULL DEFAULT 'main',
+            is_admin INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         )
         """,
@@ -159,6 +160,13 @@ def init_database() -> None:
         }
         if "owner_user_id" not in session_columns:
             conn.execute("ALTER TABLE sessions ADD COLUMN owner_user_id TEXT")
+        user_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()
+        }
+        if "is_admin" not in user_columns:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"
+            )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS ix_sessions_owner_user_id "
             "ON sessions (owner_user_id)"

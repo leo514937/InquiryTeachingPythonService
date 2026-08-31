@@ -17,6 +17,8 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
 
 首次访问前端后请先注册用户名和密码。登录后只能看到和操作当前账号创建的会话。
 
+登录页提供“普通用户”和“管理员”两个入口。管理员账号可自由注册，并可在登录后的工作台维护全局课标知识库；普通用户只能查看课标列表。可通过 `ADMIN_REGISTRATION_ENABLED=false` 关闭新增管理员注册，已有管理员仍可登录。
+
 当前 HTTP 部署地址：`http://152.136.39.252:5173/`。
 
 ## 主导师模型
@@ -52,10 +54,15 @@ python bootstrap.py
 ```text
 POST /api/auth/register
 POST /api/auth/login
+POST /api/auth/admin/register
+POST /api/auth/admin/login
 POST /api/auth/logout
 GET  /api/auth/me
 GET  /health
 GET  /api/flows
+GET  /api/curriculum/files
+POST /api/curriculum/files
+DELETE /api/curriculum/files?source={source}
 POST /api/sessions
 GET  /api/sessions/{session_id}
 GET  /api/sessions/{session_id}/messages
@@ -71,11 +78,13 @@ PUT  /api/sessions/{session_id}/stages/{stage_id}/draft
 GET  /api/sessions/{session_id}/export
 ```
 
-会话参考资料支持 `PDF`、`DOCX`、`TXT` 和 `MD`。上传成功后，系统会提取全文并自动加入当前会话后续的主导师、阶段专家和草案 Agent 上下文。默认限制为单文件 10 MB、每个会话 10 个文件、可用正文总计 50,000 字符；扫描版 PDF 暂不支持 OCR。
+会话参考资料支持 `PDF`、`DOCX`、`TXT` 和 `MD`。上传成功后，系统会提取全文并自动加入当前会话后续的主导师、阶段专家和草案 Agent 上下文。默认限制为单文件 20 MB、每个会话 10 个文件、可用正文总计 50,000 字符；扫描版 PDF 暂不支持 OCR。
 
 ## 本地课标 BM25 RAG
 
 将权威课标文件放入 `data/curriculum/`，支持 `MD`、`TXT`、`PDF` 和 `DOCX`。扫描版 PDF 暂不支持 OCR。执行以下命令导入：
+
+管理员也可以在工作台聊天输入框下方点击“课标知识库”按钮，直接上传、替换或删除课标；普通用户可以在同一入口查看当前课标。网页上传完成后立即生效，不需要执行命令。命令行方式保留用于批量导入：
 
 ```powershell
 cd E:\InquiryTeachingPythonService

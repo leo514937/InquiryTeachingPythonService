@@ -32,7 +32,7 @@ class Settings:
     upload_dir: Path = Path(
         os.getenv("UPLOAD_DIR", str(BASE_DIR / "data" / "uploads"))
     ).resolve()
-    upload_max_file_bytes: int = int(os.getenv("UPLOAD_MAX_FILE_BYTES", str(10 * 1024 * 1024)))
+    upload_max_file_bytes: int = int(os.getenv("UPLOAD_MAX_FILE_BYTES", str(20 * 1024 * 1024)))
     upload_max_files_per_session: int = int(os.getenv("UPLOAD_MAX_FILES_PER_SESSION", "10"))
     upload_max_total_chars: int = int(os.getenv("UPLOAD_MAX_TOTAL_CHARS", "50000"))
 
@@ -88,6 +88,10 @@ class Settings:
     auth_cookie_secure: bool = os.getenv(
         "AUTH_COOKIE_SECURE",
         "false",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    admin_registration_enabled: bool = os.getenv(
+        "ADMIN_REGISTRATION_ENABLED",
+        "true",
     ).strip().lower() in {"1", "true", "yes", "on"}
 
     def dify_stage_agents(self) -> list[DifyAgentConfig]:

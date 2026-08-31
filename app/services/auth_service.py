@@ -73,6 +73,7 @@ def serialize_user(user: UserModel) -> dict:
         "id": user.id,
         "username": user.username,
         "chat_mode": user.chat_mode if user.chat_mode in VALID_CHAT_MODES else MAIN_MODE,
+        "is_admin": bool(user.is_admin),
     }
 
 
@@ -95,7 +96,13 @@ def issue_token(db: Session, user: UserModel) -> str:
     return token
 
 
-def register_user(db: Session, username: str, password: str) -> tuple[UserModel, str]:
+def register_user(
+    db: Session,
+    username: str,
+    password: str,
+    *,
+    is_admin: bool = False,
+) -> tuple[UserModel, str]:
     normalized_username = normalize_username(username)
     existing = db.query(UserModel).filter(UserModel.username == normalized_username).first()
     if existing:
@@ -117,6 +124,7 @@ def register_user(db: Session, username: str, password: str) -> tuple[UserModel,
         username=normalized_username,
         password_hash=hash_password(password),
         chat_mode=initial_chat_mode,
+        is_admin=1 if is_admin else 0,
         created_at=now_iso(),
     )
     db.add(user)
@@ -135,13 +143,21 @@ def register_user(db: Session, username: str, password: str) -> tuple[UserModel,
     return user, token
 
 
-def login_user(db: Session, username: str, password: str) -> tuple[UserModel, str] | None:
+def login_user(
+    db: Session,
+    username: str,
+    password: str,
+    *,
+    require_admin: bool | None = None,
+) -> tuple[UserModel, str] | None:
     user = (
         db.query(UserModel)
         .filter(UserModel.username == normalize_username(username))
         .first()
     )
     if not user or not verify_password(password, user.password_hash):
+        return None
+    if require_admin is not None and bool(user.is_admin) != require_admin:
         return None
 
     token = issue_token(db, user)

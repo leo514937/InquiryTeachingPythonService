@@ -5,6 +5,7 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 
 from docx import Document
@@ -77,6 +78,11 @@ class CurriculumKnowledgeService:
 
         content = self.extract_text(path)
         return self.ingest(source or path.name, content)
+
+    def ingest_bytes(self, filename: str, data: bytes) -> int:
+        source = self.safe_source_name(filename)
+        content = self.extract_bytes(source, data)
+        return self.ingest(source, content)
 
     def ingest(self, source: str, content: str) -> int:
         normalized_source = source.replace("\\", "/").strip()
@@ -181,18 +187,35 @@ class CurriculumKnowledgeService:
 
     @staticmethod
     def extract_text(path: Path) -> str:
-        extension = path.suffix.lower()
+        return CurriculumKnowledgeService.extract_bytes(path.name, path.read_bytes())
+
+    @staticmethod
+    def safe_source_name(filename: str) -> str:
+        source = Path((filename or "").replace("\\", "/")).name.strip()
+        if not source:
+            raise CurriculumFileError("课标文件名不能为空")
+        return source[:255]
+
+    @staticmethod
+    def extract_bytes(filename: str, data: bytes) -> str:
+        source = CurriculumKnowledgeService.safe_source_name(filename)
+        extension = Path(source).suffix.lower()
+        if extension not in SUPPORTED_CURRICULUM_EXTENSIONS:
+            supported = ", ".join(sorted(SUPPORTED_CURRICULUM_EXTENSIONS))
+            raise CurriculumFileError(f"仅支持以下课标文件格式：{supported}")
+        if not data:
+            raise CurriculumFileError("不能上传空文件")
         try:
             if extension in {".md", ".txt"}:
-                return extract_plain_text(path)
+                return extract_plain_bytes(data)
             if extension == ".pdf":
-                return extract_pdf(path)
+                return extract_pdf_bytes(data)
             if extension == ".docx":
-                return extract_docx(path)
+                return extract_docx_bytes(data)
         except CurriculumFileError:
             raise
         except Exception as exc:
-            raise CurriculumFileError(f"课标文件解析失败：{path.name}") from exc
+            raise CurriculumFileError(f"课标文件解析失败：{source}") from exc
         raise CurriculumFileError(f"不支持的课标文件格式：{extension}")
 
 
@@ -338,7 +361,10 @@ def compact_text(text: str) -> str:
 
 
 def extract_plain_text(path: Path) -> str:
-    data = path.read_bytes()
+    return extract_plain_bytes(path.read_bytes())
+
+
+def extract_plain_bytes(data: bytes) -> str:
     for encoding in ("utf-8-sig", "gb18030"):
         try:
             return data.decode(encoding)
@@ -348,7 +374,11 @@ def extract_plain_text(path: Path) -> str:
 
 
 def extract_pdf(path: Path) -> str:
-    reader = PdfReader(str(path))
+    return extract_pdf_bytes(path.read_bytes())
+
+
+def extract_pdf_bytes(data: bytes) -> str:
+    reader = PdfReader(BytesIO(data))
     if reader.is_encrypted and reader.decrypt("") == 0:
         raise CurriculumFileError("PDF 已加密，无法读取")
     pages = [normalize_text(page.extract_text() or "") for page in reader.pages]
@@ -379,7 +409,11 @@ def remove_repeated_page_edges(pages: list[str]) -> list[str]:
 
 
 def extract_docx(path: Path) -> str:
-    document = Document(str(path))
+    return extract_docx_bytes(path.read_bytes())
+
+
+def extract_docx_bytes(data: bytes) -> str:
+    document = Document(BytesIO(data))
     blocks = [paragraph.text for paragraph in document.paragraphs if paragraph.text.strip()]
     for table in document.tables:
         for row in table.rows:
