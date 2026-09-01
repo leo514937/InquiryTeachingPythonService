@@ -151,6 +151,19 @@ class CurriculumChunkModel(Base):
     )
 
 
+class CurriculumSourceModel(Base):
+    __tablename__ = "curriculum_sources"
+
+    source = Column(String, primary_key=True)
+    checksum = Column(String, nullable=False, default="")
+    chunk_count = Column(Integer, nullable=False, default=0)
+    vector_chunk_count = Column(Integer, nullable=False, default=0)
+    vector_status = Column(String, nullable=False, default="pending")
+    embedding_model = Column(String, nullable=False, default="")
+    last_error = Column(Text, nullable=False, default="")
+    updated_at = Column(String, nullable=False)
+
+
 class AgentConversationModel(Base):
     __tablename__ = "agent_conversations"
 

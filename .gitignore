@@ -15,5 +15,8 @@ logs/
 .coverage
 outputs/
 data/uploads/
+data/models/
+data/curriculum_vector/
+data/curriculum_snapshots/
 frontend/node_modules/
 frontend/dist/

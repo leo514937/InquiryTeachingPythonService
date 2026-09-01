@@ -59,8 +59,58 @@ class Settings:
     ).strip().lower() in {"1", "true", "yes", "on"}
     curriculum_vector_enabled: bool = os.getenv(
         "CURRICULUM_VECTOR_ENABLED",
+        "true",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    curriculum_vector_required: bool = os.getenv(
+        "CURRICULUM_VECTOR_REQUIRED",
         "false",
     ).strip().lower() in {"1", "true", "yes", "on"}
+    curriculum_embedding_model: str = os.getenv(
+        "CURRICULUM_EMBEDDING_MODEL",
+        "BAAI/bge-small-zh-v1.5",
+    ).strip()
+    curriculum_embedding_model_dir: Path = Path(
+        os.getenv(
+            "CURRICULUM_EMBEDDING_MODEL_DIR",
+            str(BASE_DIR / "data" / "models" / "bge-small-zh-v1.5"),
+        )
+    ).resolve()
+    curriculum_embedding_device: str = os.getenv(
+        "CURRICULUM_EMBEDDING_DEVICE",
+        "cpu",
+    ).strip()
+    curriculum_vector_dir: Path = Path(
+        os.getenv(
+            "CURRICULUM_VECTOR_DIR",
+            str(BASE_DIR / "data" / "curriculum_vector"),
+        )
+    ).resolve()
+    curriculum_vector_collection: str = os.getenv(
+        "CURRICULUM_VECTOR_COLLECTION",
+        "curriculum_chunks",
+    ).strip()
+    curriculum_snapshot_dir: Path = Path(
+        os.getenv(
+            "CURRICULUM_SNAPSHOT_DIR",
+            str(BASE_DIR / "data" / "curriculum_snapshots"),
+        )
+    ).resolve()
+    curriculum_snapshot_keep: int = max(
+        1,
+        int(os.getenv("CURRICULUM_SNAPSHOT_KEEP", "3")),
+    )
+    curriculum_hybrid_vector_weight: float = max(
+        0.0,
+        float(os.getenv("CURRICULUM_HYBRID_VECTOR_WEIGHT", "0.65")),
+    )
+    curriculum_hybrid_bm25_weight: float = max(
+        0.0,
+        float(os.getenv("CURRICULUM_HYBRID_BM25_WEIGHT", "0.35")),
+    )
+    curriculum_embedding_batch_size: int = max(
+        1,
+        int(os.getenv("CURRICULUM_EMBEDDING_BATCH_SIZE", "8")),
+    )
 
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_api_base: str = os.getenv("LLM_API_BASE", "https://api.openai.com/v1")

@@ -63,6 +63,11 @@ GET  /api/flows
 GET  /api/curriculum/files
 POST /api/curriculum/files
 DELETE /api/curriculum/files?source={source}
+GET  /api/curriculum/status
+POST /api/curriculum/vector/rebuild
+GET  /api/curriculum/retrievals
+GET  /api/curriculum/export
+POST /api/curriculum/import
 POST /api/sessions
 GET  /api/sessions/{session_id}
 GET  /api/sessions/{session_id}/messages
@@ -80,7 +85,7 @@ GET  /api/sessions/{session_id}/export
 
 会话参考资料支持 `PDF`、`DOCX`、`TXT` 和 `MD`。上传成功后，系统会提取全文并自动加入当前会话后续的主导师、阶段专家和草案 Agent 上下文。默认限制为单文件 20 MB、每个会话 10 个文件、可用正文总计 50,000 字符；扫描版 PDF 暂不支持 OCR。
 
-## 本地课标 BM25 RAG
+## 本地课标混合 RAG
 
 将权威课标文件放入 `data/curriculum/`，支持 `MD`、`TXT`、`PDF` 和 `DOCX`。扫描版 PDF 暂不支持 OCR。执行以下命令导入：
 
@@ -91,7 +96,16 @@ cd E:\InquiryTeachingPythonService
 .\.venv\Scripts\python.exe scripts\ingest_curriculum.py data\curriculum
 ```
 
-导入命令会递归读取目录、切分正文并写入本地 `curriculum_chunks` 表。同一路径的文件重复导入时会替换旧片段。聊天时系统自动使用 BM25 检索相关课标，将命中内容作为年龄特点、技术水平、任务难度、安全边界和评价方式的参考，并在回答末尾简要显示来源。完整命中片段保存在 `rag_records` 中。
+导入命令会递归读取目录、切分正文并写入本地 `curriculum_chunks` 表。同一路径的文件重复导入时会替换旧片段。系统同时使用 BM25 关键词召回和本地 BGE Embedding 语义召回，再按学段、明确学科和融合分数重排。命中内容作为年龄特点、技术水平、任务难度、安全边界和评价方式的参考，回答末尾只简要显示来源，完整片段和各路分数保存在 `rag_records` 中。
+
+首次部署或模型缺失时执行一次初始化脚本。脚本会下载或验证模型，并根据 `curriculum_chunks` 重建 Chroma 索引：
+
+```powershell
+cd E:\InquiryTeachingPythonService
+.\.venv\Scripts\python.exe scripts\setup_curriculum_rag.py
+```
+
+离线服务器可先把模型放入 `data/models/bge-small-zh-v1.5/`，再添加 `--skip-download`。所有网页用户共用后端模型，无需在个人电脑下载。
 
 默认配置如下，可在 `.env` 中覆盖：
 
@@ -103,10 +117,18 @@ CURRICULUM_CANDIDATE_K=16
 CURRICULUM_CHUNK_SIZE=512
 CURRICULUM_CHUNK_OVERLAP=64
 CURRICULUM_RERANK_ENABLED=true
-CURRICULUM_VECTOR_ENABLED=false
+CURRICULUM_VECTOR_ENABLED=true
+CURRICULUM_VECTOR_REQUIRED=false
+CURRICULUM_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
+CURRICULUM_EMBEDDING_MODEL_DIR=./data/models/bge-small-zh-v1.5
+CURRICULUM_EMBEDDING_DEVICE=cpu
+CURRICULUM_VECTOR_DIR=./data/curriculum_vector
+CURRICULUM_VECTOR_COLLECTION=curriculum_chunks
+CURRICULUM_HYBRID_VECTOR_WEIGHT=0.65
+CURRICULUM_HYBRID_BM25_WEIGHT=0.35
 ```
 
-`CURRICULUM_VECTOR_ENABLED` 是后续向量检索的预留开关，当前版本只使用本地 BM25。知识库为空、检索关闭或检索失败时，原有聊天流程继续运行。
+`app.db` 中的 `curriculum_chunks` 是课标正文事实来源，`data/curriculum_vector/` 仅保存可重建的 Chroma 向量索引。模型、索引、快照、`.venv` 和 `.env` 均不提交到 Git。Embedding 或 Chroma 不可用时会自动退回 BM25；仅当 `CURRICULUM_VECTOR_REQUIRED=true` 时才把向量失败视为必须处理的错误。
 
 ## 快速请求示例
 

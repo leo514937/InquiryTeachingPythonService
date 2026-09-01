@@ -573,6 +573,59 @@
           </button>
         </div>
 
+        <div v-if="currentUser?.is_admin" class="curriculum-vector-panel">
+          <div class="curriculum-vector-summary">
+            <Database :size="20" />
+            <div>
+              <strong>{{ curriculumStatusLabel }}</strong>
+              <span v-if="curriculumStatus">
+                {{ curriculumStatus.model }} · {{ curriculumStatus.vector_count }}/{{ curriculumStatus.database_chunk_count }} 个向量
+              </span>
+              <span v-else>正在读取向量服务状态</span>
+              <small v-if="curriculumStatus?.error" :title="curriculumStatus.error">{{ curriculumStatus.error }}</small>
+            </div>
+          </div>
+          <div class="curriculum-admin-actions">
+            <button
+              class="ghost-button compact"
+              type="button"
+              :disabled="Boolean(curriculumAdminOperation) || isLoadingCurriculumAdmin"
+              @click="handleRebuildCurriculumVectors"
+            >
+              <LoaderCircle v-if="curriculumAdminOperation === 'rebuild'" class="spin-icon" :size="15" />
+              <RefreshCw v-else :size="15" />
+              重建索引
+            </button>
+            <button
+              class="ghost-button compact"
+              type="button"
+              :disabled="Boolean(curriculumAdminOperation)"
+              @click="handleExportCurriculum"
+            >
+              <LoaderCircle v-if="curriculumAdminOperation === 'export'" class="spin-icon" :size="15" />
+              <Download v-else :size="15" />
+              导出知识库
+            </button>
+            <button
+              class="ghost-button compact"
+              type="button"
+              :disabled="Boolean(curriculumAdminOperation)"
+              @click="curriculumBundleInputRef?.click()"
+            >
+              <LoaderCircle v-if="curriculumAdminOperation === 'import'" class="spin-icon" :size="15" />
+              <Upload v-else :size="15" />
+              导入知识库
+            </button>
+          </div>
+          <input
+            ref="curriculumBundleInputRef"
+            class="visually-hidden"
+            type="file"
+            accept=".zip,application/zip"
+            @change="handleCurriculumBundleSelection"
+          />
+        </div>
+
         <button
           v-if="currentUser?.is_admin"
           class="curriculum-dropzone"
@@ -619,6 +672,9 @@
             <div class="curriculum-file-copy">
               <strong :title="item.source">{{ item.source }}</strong>
               <span>{{ item.extension.replace('.', '').toUpperCase() }} · {{ item.chunk_count }} 个片段 · {{ formatCurriculumDate(item.updated_at) }}</span>
+              <small :class="`vector-status-${item.vector_status}`" :title="item.last_error">
+                {{ curriculumFileVectorLabel(item) }}
+              </small>
             </div>
             <button
               v-if="currentUser?.is_admin"
@@ -638,6 +694,43 @@
           <BookOpen :size="24" />
           <span>当前还没有导入课标</span>
         </div>
+
+        <section v-if="currentUser?.is_admin" class="curriculum-retrieval-section">
+          <div class="curriculum-section-head">
+            <div>
+              <History :size="18" />
+              <strong>最近召回</strong>
+            </div>
+            <button
+              class="icon-button compact"
+              type="button"
+              title="刷新召回记录"
+              aria-label="刷新召回记录"
+              :disabled="isLoadingCurriculumAdmin"
+              @click="refreshCurriculumAdminData"
+            >
+              <RefreshCw :size="15" />
+            </button>
+          </div>
+          <div v-if="curriculumRetrievals.length" class="curriculum-retrieval-list">
+            <details v-for="record in curriculumRetrievals" :key="record.id" class="curriculum-retrieval-row">
+              <summary>
+                <span>{{ record.query || '空查询' }}</span>
+                <small>{{ retrievalModeLabel(record.mode) }} · {{ formatCurriculumDate(record.created_at) }}</small>
+              </summary>
+              <p v-if="record.vector_error" class="curriculum-retrieval-warning">{{ record.vector_error }}</p>
+              <div v-if="record.records.length" class="curriculum-hit-list">
+                <article v-for="hit in record.records" :key="`${record.id}-${hit.chunk_id}`">
+                  <strong>{{ hit.source }} · 片段 {{ hit.source_index }}</strong>
+                  <span>综合 {{ formatScore(hit.score) }} · 向量 {{ formatScore(hit.vector_score) }} · BM25 {{ formatScore(hit.bm25_score) }}</span>
+                  <p>{{ hit.content }}</p>
+                </article>
+              </div>
+              <p v-else class="curriculum-retrieval-warning">本次没有命中课标片段。</p>
+            </details>
+          </div>
+          <div v-else class="curriculum-retrieval-empty">当前还没有课标召回记录</div>
+        </section>
       </section>
     </div>
 
@@ -675,10 +768,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import AuthPanel from "@/components/AuthPanel.vue";
-import { BookOpen, FileText, LoaderCircle, Paperclip, Upload, X } from "lucide-vue-next";
+import { BookOpen, Database, Download, FileText, History, LoaderCircle, Paperclip, RefreshCw, Upload, X } from "lucide-vue-next";
 import {
   createSession,
   deleteCurriculumFile,
+  downloadCurriculumBundle,
   deleteSession,
   deleteSessionFile,
   applyDraftProposalActions,
@@ -687,6 +781,8 @@ import {
   getChatMode,
   getCurrentUser,
   getCurriculumFiles,
+  getCurriculumRetrievals,
+  getCurriculumStatus,
   exportSession,
   getFlows,
   getMessages,
@@ -694,6 +790,8 @@ import {
   getSessionFiles,
   getSessions,
   logoutUser,
+  importCurriculumBundle,
+  rebuildCurriculumVectors,
   rollbackSession,
   saveDraft,
   setDraftMode,
@@ -706,6 +804,8 @@ import type {
   AuthUser,
   ChatMode,
   CurriculumFileItem,
+  CurriculumRetrievalRecord,
+  CurriculumVectorStatus,
   DraftProposal,
   DraftSelection,
   DraftProposalSegment,
@@ -727,6 +827,8 @@ const messages = ref<MessageItem[]>([]);
 const newSessionFlowName = ref("inquiry_7_stage");
 const sessionFiles = ref<SessionFileItem[]>([]);
 const curriculumFiles = ref<CurriculumFileItem[]>([]);
+const curriculumStatus = ref<CurriculumVectorStatus | null>(null);
+const curriculumRetrievals = ref<CurriculumRetrievalRecord[]>([]);
 const selectedSessionId = ref("");
 const selectedStageId = ref("");
 const topicInput = ref("光的反射");
@@ -751,6 +853,7 @@ const feedRef = ref<HTMLElement | null>(null);
 const chatInputRef = ref<HTMLTextAreaElement | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const curriculumFileInputRef = ref<HTMLInputElement | null>(null);
+const curriculumBundleInputRef = ref<HTMLInputElement | null>(null);
 const draftEditorRef = ref<HTMLTextAreaElement | null>(null);
 const reviewPreviewRef = ref<HTMLElement | null>(null);
 const showDraftReviewOverlay = ref(false);
@@ -766,6 +869,8 @@ const fileOperationError = ref("");
 const showCurriculumModal = ref(false);
 const isLoadingCurriculum = ref(false);
 const isUploadingCurriculum = ref(false);
+const isLoadingCurriculumAdmin = ref(false);
+const curriculumAdminOperation = ref<"" | "rebuild" | "export" | "import">("");
 const deletingCurriculumSources = ref<string[]>([]);
 const curriculumError = ref("");
 const curriculumUploadResults = ref<Array<{
@@ -863,6 +968,14 @@ const isDraftMode = computed(() => Boolean(currentSession.value?.draft_mode_enab
 const curriculumTotalChunks = computed(() =>
   curriculumFiles.value.reduce((total, item) => total + item.chunk_count, 0),
 );
+const curriculumStatusLabel = computed(() => {
+  const status = curriculumStatus.value;
+  if (!status) return "正在检查向量检索";
+  if (!status.enabled) return "仅使用 BM25 检索";
+  if (status.rebuild_required) return "向量索引需要重建";
+  if (status.available) return "混合检索可用";
+  return "向量不可用，已降级 BM25";
+});
 
 const visibleDraftSegments = computed(() => {
   return draftProposal.value?.segments.filter((segment) => segment.kind !== "equal") || [];
@@ -1312,6 +1425,8 @@ async function logout() {
     selectedStageId.value = "";
     messages.value = [];
     curriculumFiles.value = [];
+    curriculumStatus.value = null;
+    curriculumRetrievals.value = [];
     showCurriculumModal.value = false;
     draftContent.value = "";
     draftProposal.value = null;
@@ -1369,10 +1484,30 @@ async function refreshCurriculumFiles() {
   }
 }
 
+async function refreshCurriculumAdminData() {
+  if (!currentUser.value?.is_admin) return;
+  isLoadingCurriculumAdmin.value = true;
+  const [statusResult, retrievalResult] = await Promise.allSettled([
+    getCurriculumStatus(),
+    getCurriculumRetrievals(20),
+  ]);
+  if (statusResult.status === "fulfilled") {
+    curriculumStatus.value = statusResult.value;
+  } else {
+    curriculumError.value = statusResult.reason?.message || String(statusResult.reason);
+  }
+  if (retrievalResult.status === "fulfilled") {
+    curriculumRetrievals.value = retrievalResult.value;
+  } else if (!curriculumError.value) {
+    curriculumError.value = retrievalResult.reason?.message || String(retrievalResult.reason);
+  }
+  isLoadingCurriculumAdmin.value = false;
+}
+
 async function openCurriculumPanel() {
   showCurriculumModal.value = true;
   curriculumUploadResults.value = [];
-  await refreshCurriculumFiles();
+  await Promise.all([refreshCurriculumFiles(), refreshCurriculumAdminData()]);
 }
 
 function openCurriculumFilePicker() {
@@ -1418,6 +1553,7 @@ async function importCurriculumFiles(files: File[]) {
   }
   curriculumError.value = errors.join("；");
   statusText.value = errors.length ? "部分课标导入失败" : `已导入 ${files.length} 个课标文件`;
+  await refreshCurriculumAdminData();
 }
 
 async function handleCurriculumFileSelection(event: Event) {
@@ -1444,6 +1580,7 @@ async function removeCurriculumSource(item: CurriculumFileItem) {
     await deleteCurriculumFile(item.source);
     curriculumFiles.value = curriculumFiles.value.filter((file) => file.source !== item.source);
     statusText.value = `已删除课标：${item.source}`;
+    await refreshCurriculumAdminData();
   } catch (error: any) {
     curriculumError.value = error.message || String(error);
   } finally {
@@ -1451,6 +1588,80 @@ async function removeCurriculumSource(item: CurriculumFileItem) {
       (source) => source !== item.source,
     );
   }
+}
+
+async function handleRebuildCurriculumVectors() {
+  if (!currentUser.value?.is_admin || curriculumAdminOperation.value) return;
+  curriculumAdminOperation.value = "rebuild";
+  curriculumError.value = "";
+  try {
+    curriculumStatus.value = await rebuildCurriculumVectors();
+    await refreshCurriculumFiles();
+    statusText.value = "课标向量索引已重建";
+  } catch (error: any) {
+    curriculumError.value = error.message || String(error);
+  } finally {
+    curriculumAdminOperation.value = "";
+  }
+}
+
+async function handleExportCurriculum() {
+  if (!currentUser.value?.is_admin || curriculumAdminOperation.value) return;
+  curriculumAdminOperation.value = "export";
+  curriculumError.value = "";
+  try {
+    const blob = await downloadCurriculumBundle();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "curriculum-knowledge.zip";
+    anchor.click();
+    URL.revokeObjectURL(url);
+    statusText.value = "课标知识库已导出";
+  } catch (error: any) {
+    curriculumError.value = error.message || String(error);
+  } finally {
+    curriculumAdminOperation.value = "";
+  }
+}
+
+async function handleCurriculumBundleSelection(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file || !currentUser.value?.is_admin || curriculumAdminOperation.value) return;
+  if (!confirm("导入会替换知识包中同名课标，其他课标保持不变。确认继续吗？")) return;
+  curriculumAdminOperation.value = "import";
+  curriculumError.value = "";
+  try {
+    const result = await importCurriculumBundle(file);
+    await Promise.all([refreshCurriculumFiles(), refreshCurriculumAdminData()]);
+    statusText.value = `已导入 ${result.source_count} 个课标、${result.chunk_count} 个片段`;
+  } catch (error: any) {
+    curriculumError.value = error.message || String(error);
+  } finally {
+    curriculumAdminOperation.value = "";
+  }
+}
+
+function curriculumFileVectorLabel(item: CurriculumFileItem): string {
+  if (item.vector_status === "ready") {
+    return `已向量化 ${item.vector_chunk_count}/${item.chunk_count}`;
+  }
+  if (item.vector_status === "disabled") return "仅 BM25";
+  if (item.vector_status === "error") return "向量化失败，使用 BM25";
+  return "等待重建向量";
+}
+
+function retrievalModeLabel(mode: string): string {
+  if (mode === "local_hybrid") return "混合检索";
+  if (mode === "local_bm25_fallback") return "BM25 降级";
+  if (mode.includes("empty")) return "未命中";
+  return "BM25";
+}
+
+function formatScore(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(3) : "0.000";
 }
 
 function formatCurriculumDate(value: string) {

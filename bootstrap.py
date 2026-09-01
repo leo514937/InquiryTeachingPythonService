@@ -135,6 +135,18 @@ def init_database() -> None:
         ON curriculum_chunks (source)
         """,
         """
+        CREATE TABLE IF NOT EXISTS curriculum_sources (
+            source TEXT PRIMARY KEY,
+            checksum TEXT NOT NULL DEFAULT '',
+            chunk_count INTEGER NOT NULL DEFAULT 0,
+            vector_chunk_count INTEGER NOT NULL DEFAULT 0,
+            vector_status TEXT NOT NULL DEFAULT 'pending',
+            embedding_model TEXT NOT NULL DEFAULT '',
+            last_error TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
         CREATE TABLE IF NOT EXISTS agent_conversations (
             id TEXT PRIMARY KEY,
             session_id TEXT NOT NULL,

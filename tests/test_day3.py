@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import unittest
 import uuid
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -21,6 +22,7 @@ os.environ["DIFY_DATASET_API_KEY"] = ""
 os.environ["DIFY_DATASET_ID"] = ""
 os.environ["DIFY_STAGE_AGENT_MODE"] = "mock"
 os.environ["DIFY_STAGE_AGENTS_JSON"] = ""
+os.environ["CURRICULUM_VECTOR_ENABLED"] = "false"
 os.environ["FRONTEND_ORIGIN"] = (
     "http://127.0.0.1:5173,"
     "http://localhost:5173,"
@@ -39,6 +41,7 @@ from app.db.models import (
     AppSettingModel,
     ChatTurnModel,
     CurriculumChunkModel,
+    CurriculumSourceModel,
     DraftProposalModel,
     MessageModel,
     RagRecordModel,
@@ -49,7 +52,11 @@ from app.main import app
 from app.services.auth_service import register_user
 from app.services.chat_interrupt_service import chat_interruptions
 from app.services.context_service import ContextService
-from app.services.curriculum_knowledge_service import CurriculumKnowledgeService
+from app.services.curriculum_knowledge_service import (
+    CurriculumKnowledgeService,
+    detect_subjects,
+)
+from app.services.curriculum_vector_service import CurriculumVectorHit
 from app.services.prompt_service import PromptService
 from app.services.session_file_service import SessionFileService
 from app.workflow.flows import get_flow
@@ -121,6 +128,57 @@ def parse_sse(text: str) -> list[tuple[str, dict]]:
         if data_lines:
             events.append((event_name, json.loads("\n".join(data_lines))))
     return events
+
+
+class FakeCurriculumVectorStore:
+    def __init__(self, *, available: bool = True, error: str = ""):
+        self.available = available
+        self.error = error
+        self.rows = []
+        self.deleted_sources = []
+
+    def index_chunks(self, chunks):
+        if not self.available:
+            raise RuntimeError(self.error or "fake vector unavailable")
+        self.rows.extend(chunks)
+        return len(chunks)
+
+    def delete_source(self, source):
+        self.deleted_sources.append(source)
+        self.rows = [row for row in self.rows if row.source != source]
+
+    def query(self, _query, top_k):
+        if not self.available:
+            raise RuntimeError(self.error or "fake vector unavailable")
+        return [
+            CurriculumVectorHit(chunk_id=int(row.id), score=0.95 - index * 0.05)
+            for index, row in enumerate(self.rows[:top_k])
+        ]
+
+    def rebuild(self, chunks):
+        if not self.available:
+            raise RuntimeError(self.error or "fake vector unavailable")
+        self.rows = list(chunks)
+        return len(chunks)
+
+    def snapshot(self):
+        return None
+
+    def status(self):
+        return {
+            "enabled": True,
+            "required": False,
+            "available": self.available,
+            "dependency_ready": self.available,
+            "model": "fake-local-model",
+            "model_dir": "fake",
+            "device": "cpu",
+            "vector_dir": "fake",
+            "collection": "curriculum_chunks",
+            "vector_count": len(self.rows),
+            "rebuild_required": False,
+            "error": self.error,
+        }
 
 
 class AgentArchitectureApiTests(unittest.TestCase):
@@ -905,6 +963,111 @@ class AgentArchitectureApiTests(unittest.TestCase):
             self.assertIn("DOCX_TABLE_LEFT", docx_text)
         finally:
             shutil.rmtree(curriculum_dir, ignore_errors=True)
+
+    def test_curriculum_hybrid_retrieval_and_vector_sync(self):
+        source = f"初中物理课标_{uuid.uuid4().hex}.md"
+        settings = get_settings()
+        vector_store = FakeCurriculumVectorStore()
+        try:
+            with patch.object(settings, "curriculum_vector_enabled", True), patch.object(
+                settings,
+                "curriculum_embedding_model",
+                "fake-local-model",
+            ):
+                with SessionLocal() as db:
+                    service = CurriculumKnowledgeService(
+                        db,
+                        settings,
+                        vector_store=vector_store,
+                    )
+                    count = service.ingest(
+                        source,
+                        "初中八年级学生通过推墙体验力的作用是相互的，并记录身体后退的证据。",
+                    )
+                    db.commit()
+                    self.assertEqual(len(vector_store.rows), count)
+
+                    results = service.retrieve("为什么推墙的人会向后移动", top_k=1)
+                    self.assertTrue(results)
+                    self.assertEqual(results[0].source, source)
+                    self.assertGreater(results[0].vector_score, 0)
+                    self.assertEqual(results[0].retrieval_mode, "local_hybrid")
+
+                    deleted = service.delete_source(source)
+                    db.commit()
+                    self.assertGreater(deleted, 0)
+                    self.assertIn(source, vector_store.deleted_sources)
+                    self.assertEqual(
+                        db.query(CurriculumChunkModel)
+                        .filter(CurriculumChunkModel.source == source)
+                        .count(),
+                        0,
+                    )
+        finally:
+            with SessionLocal() as db:
+                db.query(CurriculumSourceModel).filter(
+                    CurriculumSourceModel.source == source
+                ).delete(synchronize_session=False)
+                db.query(CurriculumChunkModel).filter(
+                    CurriculumChunkModel.source == source
+                ).delete(synchronize_session=False)
+                db.commit()
+
+    def test_curriculum_subject_detection_only_filters_explicit_subjects(self):
+        self.assertEqual(detect_subjects("八年级力的作用是相互的探究"), {"physics"})
+        self.assertEqual(detect_subjects("初中函数与方程教学"), {"mathematics"})
+        self.assertEqual(detect_subjects("适合八年级的探究活动"), set())
+
+    def test_curriculum_admin_export_import_and_permissions(self):
+        source = f"export_{uuid.uuid4().hex}.md"
+        admin_client = TestClient(app)
+        ordinary_client = TestClient(app)
+        try:
+            password = "valid-password-123"
+            admin_client.post(
+                "/api/auth/admin/register",
+                json={"username": f"export_admin_{uuid.uuid4().hex[:8]}", "password": password},
+            )
+            ordinary_client.post(
+                "/api/auth/register",
+                json={"username": f"export_user_{uuid.uuid4().hex[:8]}", "password": password},
+            )
+            uploaded = admin_client.post(
+                "/api/curriculum/files",
+                files={"file": (source, "初中实验应记录证据。".encode("utf-8"), "text/markdown")},
+            )
+            self.assertEqual(uploaded.status_code, 200, uploaded.text)
+            self.assertEqual(ordinary_client.get("/api/curriculum/status").status_code, 403)
+            self.assertEqual(ordinary_client.get("/api/curriculum/export").status_code, 403)
+            self.assertEqual(ordinary_client.get("/api/curriculum/retrievals").status_code, 403)
+
+            exported = admin_client.get("/api/curriculum/export")
+            self.assertEqual(exported.status_code, 200)
+            with zipfile.ZipFile(BytesIO(exported.content)) as archive:
+                payload = json.loads(archive.read("curriculum.json").decode("utf-8"))
+            exported_source = next(item for item in payload["sources"] if item["source"] == source)
+            serialized = json.dumps(exported_source, ensure_ascii=False)
+            self.assertIn("初中实验应记录证据", serialized)
+            self.assertNotIn("password_hash", serialized)
+            self.assertNotIn("auth_sessions", serialized)
+
+            self.assertEqual(
+                admin_client.delete("/api/curriculum/files", params={"source": source}).status_code,
+                200,
+            )
+            imported = admin_client.post(
+                "/api/curriculum/import",
+                files={"file": ("curriculum-knowledge.zip", exported.content, "application/zip")},
+            )
+            self.assertEqual(imported.status_code, 200, imported.text)
+            listed = admin_client.get("/api/curriculum/files").json()["data"]
+            self.assertIn(source, {item["source"] for item in listed})
+        finally:
+            with SessionLocal() as db:
+                CurriculumKnowledgeService(db).delete_source(source)
+                db.commit()
+            admin_client.close()
+            ordinary_client.close()
 
     def test_chat_injects_curriculum_reference_and_persists_sources(self):
         source = f"小学信息科技课标_{uuid.uuid4().hex}.md"

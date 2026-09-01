@@ -2106,9 +2106,66 @@ button {
 }
 
 .curriculum-modal {
-  width: min(640px, calc(100vw - 32px));
+  width: min(780px, calc(100vw - 32px));
   max-height: min(760px, calc(100vh - 32px));
   overflow: auto;
+}
+
+.curriculum-vector-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.curriculum-vector-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--brand);
+}
+
+.curriculum-vector-summary > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.curriculum-vector-summary strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.curriculum-vector-summary span,
+.curriculum-vector-summary small {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curriculum-vector-summary small {
+  color: var(--danger);
+}
+
+.curriculum-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.curriculum-admin-actions .ghost-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: auto;
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 12px;
 }
 
 .curriculum-modal-head {
@@ -2231,6 +2288,124 @@ button {
 .curriculum-file-copy span {
   font-size: 11px;
   color: var(--text-secondary);
+}
+
+.curriculum-file-copy small {
+  width: fit-content;
+  max-width: 100%;
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curriculum-file-copy .vector-status-ready {
+  color: var(--success);
+}
+
+.curriculum-file-copy .vector-status-pending,
+.curriculum-file-copy .vector-status-disabled {
+  color: var(--text-secondary);
+}
+
+.curriculum-file-copy .vector-status-error {
+  color: var(--danger);
+}
+
+.curriculum-retrieval-section {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.curriculum-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.curriculum-section-head > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.curriculum-retrieval-list {
+  display: grid;
+  border-top: 1px solid var(--border-default);
+}
+
+.curriculum-retrieval-row {
+  border-bottom: 1px solid var(--border-default);
+}
+
+.curriculum-retrieval-row summary {
+  display: grid;
+  gap: 3px;
+  padding: 10px 4px;
+  color: var(--text-primary);
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.curriculum-retrieval-row summary span {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curriculum-retrieval-row summary small {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+}
+
+.curriculum-hit-list {
+  display: grid;
+  gap: 10px;
+  padding: 0 4px 12px 20px;
+}
+
+.curriculum-hit-list article {
+  display: grid;
+  gap: 4px;
+  padding-left: 10px;
+  border-left: 2px solid var(--selection-border);
+}
+
+.curriculum-hit-list strong,
+.curriculum-hit-list span {
+  font-size: 11px;
+}
+
+.curriculum-hit-list span {
+  color: var(--text-secondary);
+}
+
+.curriculum-hit-list p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+}
+
+.curriculum-retrieval-warning,
+.curriculum-retrieval-empty {
+  margin: 0;
+  padding: 8px 4px 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.curriculum-retrieval-warning {
+  color: var(--danger);
 }
 
 .curriculum-empty {

@@ -3,6 +3,8 @@ import type {
   AuthUser,
   ChatMode,
   CurriculumFileItem,
+  CurriculumRetrievalRecord,
+  CurriculumVectorStatus,
   DraftProposal,
   DraftSelection,
   FlowInfo,
@@ -12,7 +14,9 @@ import type {
   SessionListItem,
 } from "@/types";
 
-const API_BASE = import.meta.env.VITE_API_BASE?.replace(/\/$/, "") || "http://127.0.0.1:8010";
+const API_BASE =
+  import.meta.env.VITE_API_BASE?.replace(/\/$/, "") ||
+  `${window.location.protocol}//${window.location.hostname}:8010`;
 
 type ApiEnvelope<T> = {
   code?: number;
@@ -336,6 +340,46 @@ export async function deleteCurriculumFile(source: string): Promise<void> {
     `${API_BASE}/api/curriculum/files?source=${encodeURIComponent(source)}`,
     { method: "DELETE" },
   );
+}
+
+export async function getCurriculumStatus(): Promise<CurriculumVectorStatus> {
+  const payload = await readJson<ApiEnvelope<CurriculumVectorStatus>>(`${API_BASE}/api/curriculum/status`);
+  return payload.data;
+}
+
+export async function rebuildCurriculumVectors(): Promise<CurriculumVectorStatus> {
+  const payload = await readJson<ApiEnvelope<{ status: CurriculumVectorStatus }>>(
+    `${API_BASE}/api/curriculum/vector/rebuild`,
+    { method: "POST" },
+  );
+  return payload.data.status;
+}
+
+export async function getCurriculumRetrievals(limit = 20): Promise<CurriculumRetrievalRecord[]> {
+  const payload = await readJson<ApiEnvelope<CurriculumRetrievalRecord[]>>(
+    `${API_BASE}/api/curriculum/retrievals?limit=${limit}`,
+  );
+  return payload.data || [];
+}
+
+export async function downloadCurriculumBundle(): Promise<Blob> {
+  const response = await fetch(`${API_BASE}/api/curriculum/export`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.blob();
+}
+
+export async function importCurriculumBundle(file: File): Promise<{ source_count: number; chunk_count: number }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const payload = await readJson<ApiEnvelope<{ source_count: number; chunk_count: number }>>(
+    `${API_BASE}/api/curriculum/import`,
+    { method: "POST", body: formData },
+  );
+  return payload.data;
 }
 
 export async function cancelChat(sessionId: string, requestId: string): Promise<boolean> {

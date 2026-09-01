@@ -34,7 +34,8 @@ class RagService:
             }
 
         try:
-            results = CurriculumKnowledgeService(db, settings).retrieve(
+            service = CurriculumKnowledgeService(db, settings)
+            results = service.retrieve(
                 query,
                 settings.curriculum_top_k,
             )
@@ -49,13 +50,15 @@ class RagService:
         records = [RagService.curriculum_result_to_dict(result) for result in results]
         if not results:
             return "", {
-                "mode": "local_bm25_empty",
+                "mode": service.last_retrieval.get("mode", "local_bm25_empty"),
                 "query": query,
+                "vector_error": service.last_retrieval.get("vector_error", ""),
                 "records": [],
             }
         return RagService.format_curriculum_context(results), {
-            "mode": "local_bm25",
+            "mode": service.last_retrieval.get("mode", "local_bm25"),
             "query": query,
+            "vector_error": service.last_retrieval.get("vector_error", ""),
             "records": records,
         }
 
@@ -125,6 +128,10 @@ class RagService:
             "source_index": result.source_index,
             "content": result.content,
             "score": result.score,
+            "bm25_score": result.bm25_score,
+            "vector_score": result.vector_score,
+            "fusion_score": result.fusion_score,
+            "retrieval_mode": result.retrieval_mode,
         }
 
     @staticmethod

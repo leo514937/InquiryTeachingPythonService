@@ -38,3 +38,20 @@ def ensure_schema_compatibility() -> None:
                 connection.execute(
                     text("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
                 )
+
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS curriculum_sources (
+                    source VARCHAR PRIMARY KEY,
+                    checksum VARCHAR NOT NULL DEFAULT '',
+                    chunk_count INTEGER NOT NULL DEFAULT 0,
+                    vector_chunk_count INTEGER NOT NULL DEFAULT 0,
+                    vector_status VARCHAR NOT NULL DEFAULT 'pending',
+                    embedding_model VARCHAR NOT NULL DEFAULT '',
+                    last_error TEXT NOT NULL DEFAULT '',
+                    updated_at VARCHAR NOT NULL
+                )
+                """
+            )
+        )

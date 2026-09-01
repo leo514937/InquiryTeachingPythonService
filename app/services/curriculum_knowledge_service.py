@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import math
 import re
 from collections import Counter
@@ -13,7 +14,11 @@ from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
-from app.db.models import CurriculumChunkModel
+from app.db.models import CurriculumChunkModel, CurriculumSourceModel
+from app.services.curriculum_vector_service import (
+    CurriculumVectorStore,
+    CurriculumVectorUnavailable,
+)
 
 
 SUPPORTED_CURRICULUM_EXTENSIONS = {".md", ".txt", ".pdf", ".docx"}
@@ -46,6 +51,27 @@ EDUCATION_LEVEL_KEYWORDS = {
     "middle": {"初中", "七年级", "八年级", "九年级"},
     "high": {"高中", "高一", "高二", "高三"},
 }
+SUBJECT_KEYWORDS = {
+    "physics": {
+        "物理",
+        "力的作用",
+        "力学",
+        "运动和力",
+        "推墙",
+        "反作用",
+        "机械能",
+        "电磁",
+    },
+    "mathematics": {"数学", "代数", "几何", "函数", "方程", "图形与几何"},
+    "information_technology": {
+        "信息科技",
+        "信息技术",
+        "人工智能",
+        "编程",
+        "python",
+        "算法",
+    },
+}
 
 
 class CurriculumFileError(ValueError):
@@ -60,12 +86,26 @@ class CurriculumSearchResult:
     content: str
     score: float
     chunk_ids: tuple[int, ...]
+    bm25_score: float = 0.0
+    vector_score: float = 0.0
+    fusion_score: float = 0.0
+    retrieval_mode: str = "local_bm25"
 
 
 class CurriculumKnowledgeService:
-    def __init__(self, db: Session, settings: Settings | None = None):
+    def __init__(
+        self,
+        db: Session,
+        settings: Settings | None = None,
+        vector_store: CurriculumVectorStore | None = None,
+    ):
         self.db = db
         self.settings = settings or get_settings()
+        self.vector_store = vector_store or CurriculumVectorStore(self.settings)
+        self.last_retrieval = {
+            "mode": "local_bm25",
+            "vector_error": self.vector_store.error,
+        }
 
     def ingest_file(self, path: Path, *, source: str | None = None) -> int:
         path = path.resolve()
@@ -105,23 +145,176 @@ class CurriculumKnowledgeService:
         if not chunks:
             raise CurriculumFileError("课标文件无法切分出有效内容")
 
+        return self.ingest_chunks(normalized_source, chunks)
+
+    def ingest_chunks(
+        self,
+        source: str,
+        chunks: list[str],
+        *,
+        checksum: str | None = None,
+    ) -> int:
+        normalized_source = normalize_source(source)
+        normalized_chunks = [normalize_text(chunk) for chunk in chunks]
+        normalized_chunks = [chunk for chunk in normalized_chunks if chunk]
+        if not normalized_chunks:
+            raise CurriculumFileError("课标文件无法切分出有效内容")
+
+        try:
+            self.vector_store.delete_source(normalized_source)
+        except Exception:
+            # 数据库是事实源；残留向量在召回时还会经过 chunk_id 校验。
+            pass
         self.db.query(CurriculumChunkModel).filter(
             CurriculumChunkModel.source == normalized_source
         ).delete(synchronize_session=False)
         timestamp = now_iso()
-        self.db.add_all(
-            [
-                CurriculumChunkModel(
-                    source=normalized_source,
-                    source_index=index,
-                    content=chunk,
-                    created_at=timestamp,
-                )
-                for index, chunk in enumerate(chunks)
-            ]
-        )
+        rows = [
+            CurriculumChunkModel(
+                source=normalized_source,
+                source_index=index,
+                content=chunk,
+                created_at=timestamp,
+            )
+            for index, chunk in enumerate(normalized_chunks)
+        ]
+        self.db.add_all(rows)
         self.db.flush()
-        return len(chunks)
+
+        vector_count = 0
+        vector_status = "disabled"
+        vector_error = ""
+        if self.settings.curriculum_vector_enabled:
+            vector_status = "pending"
+            try:
+                vector_count = self.vector_store.index_chunks(rows)
+                vector_status = "ready"
+            except Exception as exc:
+                vector_status = "error"
+                vector_error = str(exc)
+                if self.settings.curriculum_vector_required:
+                    raise CurriculumFileError(vector_error) from exc
+
+        source_state = self.db.get(CurriculumSourceModel, normalized_source)
+        if source_state is None:
+            source_state = CurriculumSourceModel(
+                source=normalized_source,
+                updated_at=timestamp,
+            )
+            self.db.add(source_state)
+        source_state.checksum = checksum or checksum_chunks(normalized_chunks)
+        source_state.chunk_count = len(rows)
+        source_state.vector_chunk_count = vector_count
+        source_state.vector_status = vector_status
+        source_state.embedding_model = (
+            self.settings.curriculum_embedding_model
+            if self.settings.curriculum_vector_enabled
+            else ""
+        )
+        source_state.last_error = vector_error
+        source_state.updated_at = timestamp
+        self.db.flush()
+        return len(rows)
+
+    def ensure_source_records(self) -> None:
+        chunks = (
+            self.db.query(CurriculumChunkModel)
+            .order_by(CurriculumChunkModel.source, CurriculumChunkModel.source_index)
+            .all()
+        )
+        grouped: dict[str, list[CurriculumChunkModel]] = {}
+        for chunk in chunks:
+            grouped.setdefault(chunk.source, []).append(chunk)
+        timestamp = now_iso()
+        for source, rows in grouped.items():
+            state = self.db.get(CurriculumSourceModel, source)
+            if state is None:
+                state = CurriculumSourceModel(source=source, updated_at=timestamp)
+                self.db.add(state)
+                state.vector_status = (
+                    "pending" if self.settings.curriculum_vector_enabled else "disabled"
+                )
+            state.chunk_count = len(rows)
+            if not state.checksum:
+                state.checksum = checksum_chunks([row.content for row in rows])
+            if not state.embedding_model and self.settings.curriculum_vector_enabled:
+                state.embedding_model = self.settings.curriculum_embedding_model
+            state.updated_at = state.updated_at or timestamp
+        stale_sources = (
+            self.db.query(CurriculumSourceModel)
+            .filter(~CurriculumSourceModel.source.in_(list(grouped) or [""]))
+            .all()
+        )
+        for state in stale_sources:
+            self.db.delete(state)
+        self.db.flush()
+
+    def delete_source(self, source: str) -> int:
+        normalized_source = normalize_source(source)
+        try:
+            self.vector_store.delete_source(normalized_source)
+        except Exception:
+            pass
+        deleted = (
+            self.db.query(CurriculumChunkModel)
+            .filter(CurriculumChunkModel.source == normalized_source)
+            .delete(synchronize_session=False)
+        )
+        self.db.query(CurriculumSourceModel).filter(
+            CurriculumSourceModel.source == normalized_source
+        ).delete(synchronize_session=False)
+        return int(deleted)
+
+    def rebuild_vector_index(self) -> int:
+        chunks = (
+            self.db.query(CurriculumChunkModel)
+            .order_by(CurriculumChunkModel.source, CurriculumChunkModel.source_index)
+            .all()
+        )
+        timestamp = now_iso()
+        try:
+            count = self.vector_store.rebuild(chunks)
+        except Exception as exc:
+            error = str(exc)
+            self.ensure_source_records()
+            for state in self.db.query(CurriculumSourceModel).all():
+                state.vector_status = "error"
+                state.vector_chunk_count = 0
+                state.embedding_model = self.settings.curriculum_embedding_model
+                state.last_error = error
+                state.updated_at = timestamp
+            self.db.flush()
+            raise CurriculumVectorUnavailable(error) from exc
+
+        grouped_counts: Counter[str] = Counter(row.source for row in chunks)
+        self.ensure_source_records()
+        for state in self.db.query(CurriculumSourceModel).all():
+            state.vector_status = "ready"
+            state.vector_chunk_count = grouped_counts.get(state.source, 0)
+            state.embedding_model = self.settings.curriculum_embedding_model
+            state.last_error = ""
+            state.updated_at = timestamp
+        self.db.flush()
+        try:
+            self.vector_store.snapshot()
+        except Exception:
+            pass
+        return count
+
+    def status(self) -> dict:
+        self.ensure_source_records()
+        vector_status = self.vector_store.status()
+        vector_status.update(
+            {
+                "database_chunk_count": self.db.query(CurriculumChunkModel).count(),
+                "source_count": self.db.query(CurriculumSourceModel).count(),
+                "candidate_k": self.settings.curriculum_candidate_k,
+                "top_k": self.settings.curriculum_top_k,
+                "vector_weight": self.settings.curriculum_hybrid_vector_weight,
+                "bm25_weight": self.settings.curriculum_hybrid_bm25_weight,
+            }
+        )
+        return vector_status
 
     def retrieve(self, query: str, top_k: int | None = None) -> list[CurriculumSearchResult]:
         query = query.strip()
@@ -136,38 +329,98 @@ class CurriculumKnowledgeService:
         if not chunks:
             return []
 
-        scores = bm25_scores(query, chunks)
-        if not scores:
+        bm25_raw = bm25_scores(query, chunks)
+        bm25_maximum = max(bm25_raw.values(), default=0.0) or 1.0
+        bm25_normalized = {
+            chunk_id: score / bm25_maximum for chunk_id, score in bm25_raw.items()
+        }
+        vector_raw: dict[int, float] = {}
+        vector_error = self.vector_store.error
+        vector_used = False
+        if self.settings.curriculum_vector_enabled and self.vector_store.available:
+            try:
+                vector_hits = self.vector_store.query(
+                    query,
+                    self.settings.curriculum_candidate_k,
+                )
+                valid_ids = {chunk.id for chunk in chunks}
+                vector_raw = {
+                    hit.chunk_id: hit.score
+                    for hit in vector_hits
+                    if hit.chunk_id in valid_ids
+                }
+                vector_used = True
+                vector_error = ""
+            except Exception as exc:
+                vector_error = str(exc)
+        vector_maximum = max(vector_raw.values(), default=0.0) or 1.0
+        vector_normalized = {
+            chunk_id: score / vector_maximum for chunk_id, score in vector_raw.items()
+        }
+        candidate_ids = set(bm25_normalized) | set(vector_normalized)
+        if not candidate_ids:
+            self.last_retrieval = {
+                "mode": "local_hybrid_empty" if vector_used else "local_bm25_empty",
+                "vector_error": vector_error,
+            }
             return []
 
-        maximum = max(scores.values()) or 1.0
         query_levels = detect_education_levels(query)
-        ranked: list[tuple[CurriculumChunkModel, float]] = []
+        query_subjects = detect_subjects(query)
+        ranked: list[tuple[CurriculumChunkModel, float, float, float, float]] = []
+        has_vector_results = bool(vector_normalized)
+        has_bm25_results = bool(bm25_normalized)
+        vector_weight = self.settings.curriculum_hybrid_vector_weight if has_vector_results else 0.0
+        bm25_weight = self.settings.curriculum_hybrid_bm25_weight if has_bm25_results else 0.0
+        total_weight = vector_weight + bm25_weight or 1.0
         for chunk in chunks:
-            base_score = scores.get(chunk.id, 0.0)
-            if base_score <= 0:
+            if chunk.id not in candidate_ids:
                 continue
             chunk_levels = detect_education_levels(f"{chunk.source}\n{chunk.content}")
             if query_levels and chunk_levels and query_levels.isdisjoint(chunk_levels):
                 continue
-            score = base_score
-            if self.settings.curriculum_rerank_enabled:
-                normalized_base = base_score / maximum
-                score = (
-                    normalized_base * 0.65
-                    + query_token_coverage(query, chunk.content) * 0.25
-                    + phrase_score(query, chunk.content) * 0.10
-                )
-            ranked.append((chunk, score))
+            source_subjects = detect_subjects(chunk.source)
+            if query_subjects and source_subjects and query_subjects.isdisjoint(source_subjects):
+                continue
+            bm25_score = bm25_normalized.get(chunk.id, 0.0)
+            vector_score = vector_normalized.get(chunk.id, 0.0)
+            if vector_used:
+                fusion_score = (
+                    vector_score * vector_weight + bm25_score * bm25_weight
+                ) / total_weight
+                score = fusion_score
+                if self.settings.curriculum_rerank_enabled:
+                    score = (
+                        fusion_score * 0.75
+                        + query_token_coverage(query, chunk.content) * 0.15
+                        + phrase_score(query, chunk.content) * 0.10
+                    )
+            else:
+                fusion_score = bm25_score
+                score = bm25_score
+                if self.settings.curriculum_rerank_enabled:
+                    score = (
+                        bm25_score * 0.65
+                        + query_token_coverage(query, chunk.content) * 0.25
+                        + phrase_score(query, chunk.content) * 0.10
+                    )
+            ranked.append((chunk, score, bm25_score, vector_score, fusion_score))
 
         ranked.sort(key=lambda item: (-item[1], item[0].source, item[0].source_index))
         candidates = ranked[: self.settings.curriculum_candidate_k]
         limit = max(1, top_k or self.settings.curriculum_top_k)
-        selected = select_diverse_anchors(candidates, limit)
+        selected = select_diverse_scored_anchors(candidates, limit)
         chunk_map = {(chunk.source, chunk.source_index): chunk for chunk in chunks}
 
+        mode = "local_hybrid" if vector_used else (
+            "local_bm25_fallback"
+            if self.settings.curriculum_vector_enabled
+            else "local_bm25"
+        )
+        self.last_retrieval = {"mode": mode, "vector_error": vector_error}
+
         results: list[CurriculumSearchResult] = []
-        for anchor, score in selected:
+        for anchor, score, bm25_score, vector_score, fusion_score in selected:
             neighbors = [
                 chunk_map.get((anchor.source, index))
                 for index in range(anchor.source_index - 1, anchor.source_index + 2)
@@ -181,6 +434,10 @@ class CurriculumKnowledgeService:
                     content="\n\n".join(item.content for item in neighbors),
                     score=round(score, 6),
                     chunk_ids=tuple(item.id for item in neighbors),
+                    bm25_score=round(bm25_score, 6),
+                    vector_score=round(vector_score, 6),
+                    fusion_score=round(fusion_score, 6),
+                    retrieval_mode=mode,
                 )
             )
         return results
@@ -221,6 +478,21 @@ class CurriculumKnowledgeService:
 
 def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).astimezone().isoformat()
+
+
+def normalize_source(source: str) -> str:
+    normalized = (source or "").replace("\\", "/").strip()
+    if not normalized or normalized.startswith("/"):
+        raise CurriculumFileError("课标来源名称不能为空")
+    parts = [part for part in normalized.split("/") if part]
+    if not parts or any(part in {".", ".."} for part in parts):
+        raise CurriculumFileError("课标来源路径无效")
+    return "/".join(parts)[:255]
+
+
+def checksum_chunks(chunks: list[str]) -> str:
+    payload = "\n\n".join(chunks).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def chunk_text(content: str, *, size: int, overlap: int) -> list[str]:
@@ -321,6 +593,35 @@ def select_diverse_anchors(
     return selected
 
 
+def select_diverse_scored_anchors(
+    candidates: list[
+        tuple[CurriculumChunkModel, float, float, float, float]
+    ],
+    limit: int,
+) -> list[tuple[CurriculumChunkModel, float, float, float, float]]:
+    selected: list[tuple[CurriculumChunkModel, float, float, float, float]] = []
+    deferred: list[tuple[CurriculumChunkModel, float, float, float, float]] = []
+    for item in candidates:
+        chunk = item[0]
+        overlaps = any(
+            chosen.source == chunk.source
+            and abs(chosen.source_index - chunk.source_index) <= 1
+            for chosen, *_ in selected
+        )
+        if overlaps:
+            deferred.append(item)
+        else:
+            selected.append(item)
+        if len(selected) >= limit:
+            return selected
+
+    for item in deferred:
+        selected.append(item)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
 def tokenize(text: str) -> list[str]:
     raw_tokens = re.findall(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]", text.lower())
     tokens = [token for token in raw_tokens if token not in TOKEN_STOPWORDS]
@@ -334,6 +635,15 @@ def detect_education_levels(text: str) -> set[str]:
         level
         for level, keywords in EDUCATION_LEVEL_KEYWORDS.items()
         if any(keyword in text for keyword in keywords)
+    }
+
+
+def detect_subjects(text: str) -> set[str]:
+    normalized = text.lower()
+    return {
+        subject
+        for subject, keywords in SUBJECT_KEYWORDS.items()
+        if any(keyword in normalized for keyword in keywords)
     }
 
 

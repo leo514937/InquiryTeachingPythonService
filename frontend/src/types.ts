@@ -19,7 +19,56 @@ export type CurriculumFileItem = {
   source: string;
   extension: string;
   chunk_count: number;
+  vector_chunk_count: number;
+  vector_status: "ready" | "pending" | "error" | "disabled";
+  embedding_model: string;
+  last_error: string;
   updated_at: string;
+};
+
+export type CurriculumVectorStatus = {
+  enabled: boolean;
+  required: boolean;
+  available: boolean;
+  dependency_ready: boolean;
+  model: string;
+  model_dir: string;
+  device: string;
+  vector_dir: string;
+  collection: string;
+  vector_count: number;
+  database_chunk_count: number;
+  source_count: number;
+  rebuild_required: boolean;
+  error: string;
+  candidate_k: number;
+  top_k: number;
+  vector_weight: number;
+  bm25_weight: number;
+};
+
+export type CurriculumRetrievalHit = {
+  chunk_id: number;
+  chunk_ids: number[];
+  source: string;
+  source_index: number;
+  content: string;
+  score: number;
+  bm25_score: number;
+  vector_score: number;
+  fusion_score: number;
+  retrieval_mode: string;
+};
+
+export type CurriculumRetrievalRecord = {
+  id: string;
+  session_id: string;
+  stage_id: string;
+  query: string;
+  mode: string;
+  vector_error: string;
+  records: CurriculumRetrievalHit[];
+  created_at: string;
 };
 
 export type FlowInfo = {
