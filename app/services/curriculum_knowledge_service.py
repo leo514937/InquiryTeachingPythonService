@@ -310,6 +310,7 @@ class CurriculumKnowledgeService:
                 "source_count": self.db.query(CurriculumSourceModel).count(),
                 "candidate_k": self.settings.curriculum_candidate_k,
                 "top_k": self.settings.curriculum_top_k,
+                "vector_min_similarity": self.settings.curriculum_vector_min_similarity,
                 "vector_weight": self.settings.curriculum_hybrid_vector_weight,
                 "bm25_weight": self.settings.curriculum_hybrid_bm25_weight,
             }
@@ -348,6 +349,7 @@ class CurriculumKnowledgeService:
                     hit.chunk_id: hit.score
                     for hit in vector_hits
                     if hit.chunk_id in valid_ids
+                    and hit.score >= self.settings.curriculum_vector_min_similarity
                 }
                 vector_used = True
                 vector_error = ""
@@ -357,7 +359,11 @@ class CurriculumKnowledgeService:
         vector_normalized = {
             chunk_id: score / vector_maximum for chunk_id, score in vector_raw.items()
         }
-        candidate_ids = set(bm25_normalized) | set(vector_normalized)
+        # 向量检索成功时，以余弦阈值作为最终候选门槛；BM25 参与排序，
+        # 但不能让低于阈值的片段重新进入候选集。向量不可用时才纯 BM25 降级。
+        candidate_ids = (
+            set(vector_normalized) if vector_used else set(bm25_normalized)
+        )
         if not candidate_ids:
             self.last_retrieval = {
                 "mode": "local_hybrid_empty" if vector_used else "local_bm25_empty",
@@ -382,11 +388,15 @@ class CurriculumKnowledgeService:
             source_subjects = detect_subjects(chunk.source)
             if query_subjects and source_subjects and query_subjects.isdisjoint(source_subjects):
                 continue
-            bm25_score = bm25_normalized.get(chunk.id, 0.0)
-            vector_score = vector_normalized.get(chunk.id, 0.0)
+            # 对外展示原始分；相对归一化分只用于融合排序。
+            bm25_score = bm25_raw.get(chunk.id, 0.0)
+            bm25_relative_score = bm25_normalized.get(chunk.id, 0.0)
+            vector_score = vector_raw.get(chunk.id, 0.0)
+            vector_relative_score = vector_normalized.get(chunk.id, 0.0)
             if vector_used:
                 fusion_score = (
-                    vector_score * vector_weight + bm25_score * bm25_weight
+                    vector_relative_score * vector_weight
+                    + bm25_relative_score * bm25_weight
                 ) / total_weight
                 score = fusion_score
                 if self.settings.curriculum_rerank_enabled:
@@ -396,11 +406,11 @@ class CurriculumKnowledgeService:
                         + phrase_score(query, chunk.content) * 0.10
                     )
             else:
-                fusion_score = bm25_score
-                score = bm25_score
+                fusion_score = bm25_relative_score
+                score = bm25_relative_score
                 if self.settings.curriculum_rerank_enabled:
                     score = (
-                        bm25_score * 0.65
+                        bm25_relative_score * 0.65
                         + query_token_coverage(query, chunk.content) * 0.25
                         + phrase_score(query, chunk.content) * 0.10
                     )

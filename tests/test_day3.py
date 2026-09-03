@@ -54,6 +54,7 @@ from app.services.chat_interrupt_service import chat_interruptions
 from app.services.context_service import ContextService
 from app.services.curriculum_knowledge_service import (
     CurriculumKnowledgeService,
+    bm25_scores,
     detect_subjects,
 )
 from app.services.curriculum_vector_service import CurriculumVectorHit
@@ -987,10 +988,14 @@ class AgentArchitectureApiTests(unittest.TestCase):
                     db.commit()
                     self.assertEqual(len(vector_store.rows), count)
 
-                    results = service.retrieve("为什么推墙的人会向后移动", top_k=1)
+                    query = "为什么推墙的人会向后移动"
+                    results = service.retrieve(query, top_k=1)
                     self.assertTrue(results)
                     self.assertEqual(results[0].source, source)
-                    self.assertGreater(results[0].vector_score, 0)
+                    self.assertEqual(results[0].vector_score, 0.95)
+                    all_chunks = db.query(CurriculumChunkModel).all()
+                    expected_bm25 = bm25_scores(query, all_chunks)[results[0].chunk_id]
+                    self.assertAlmostEqual(results[0].bm25_score, expected_bm25, places=6)
                     self.assertEqual(results[0].retrieval_mode, "local_hybrid")
 
                     deleted = service.delete_source(source)
@@ -1017,6 +1022,53 @@ class AgentArchitectureApiTests(unittest.TestCase):
         self.assertEqual(detect_subjects("八年级力的作用是相互的探究"), {"physics"})
         self.assertEqual(detect_subjects("初中函数与方程教学"), {"mathematics"})
         self.assertEqual(detect_subjects("适合八年级的探究活动"), set())
+
+    def test_curriculum_vector_similarity_threshold(self):
+        source = f"初中物理阈值测试_{uuid.uuid4().hex}.md"
+        settings = get_settings()
+        vector_store = FakeCurriculumVectorStore()
+        try:
+            with patch.object(settings, "curriculum_vector_enabled", True), patch.object(
+                settings,
+                "curriculum_vector_min_similarity",
+                0.5,
+            ):
+                with SessionLocal() as db:
+                    service = CurriculumKnowledgeService(
+                        db,
+                        settings,
+                        vector_store=vector_store,
+                    )
+                    service.ingest(source, "初中八年级学生观察力的相互作用。")
+                    db.commit()
+                    chunk = db.query(CurriculumChunkModel).filter(
+                        CurriculumChunkModel.source == source
+                    ).one()
+
+                    with patch.object(
+                        vector_store,
+                        "query",
+                        return_value=[CurriculumVectorHit(chunk_id=chunk.id, score=0.499999)],
+                    ):
+                        self.assertEqual(service.retrieve("完全不同的检索词", top_k=1), [])
+
+                    with patch.object(
+                        vector_store,
+                        "query",
+                        return_value=[CurriculumVectorHit(chunk_id=chunk.id, score=0.5)],
+                    ):
+                        results = service.retrieve("完全不同的检索词", top_k=1)
+                        self.assertEqual(len(results), 1)
+                        self.assertEqual(results[0].vector_score, 0.5)
+        finally:
+            with SessionLocal() as db:
+                db.query(CurriculumSourceModel).filter(
+                    CurriculumSourceModel.source == source
+                ).delete(synchronize_session=False)
+                db.query(CurriculumChunkModel).filter(
+                    CurriculumChunkModel.source == source
+                ).delete(synchronize_session=False)
+                db.commit()
 
     def test_curriculum_admin_export_import_and_permissions(self):
         source = f"export_{uuid.uuid4().hex}.md"

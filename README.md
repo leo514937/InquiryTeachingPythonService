@@ -7,6 +7,22 @@
 
 ## 启动
 
+Windows 一键启动（已有依赖时）：
+
+```powershell
+.\start.bat
+```
+
+首次启动或依赖缺失时：
+
+```powershell
+.\start.bat -Install
+```
+
+默认启动后端 `http://127.0.0.1:8010` 和前端 `http://127.0.0.1:5173`。脚本会复用已经健康运行的服务；端口被其他程序占用时会报错，不会直接结束对方进程。确需重启本项目时可运行 `.\start.bat -Restart`，日志保存在 `.logs/`。
+
+手动启动方式：
+
 ```bash
 cd \InquiryTeachingPythonService
 python -m venv .venv
@@ -119,6 +135,7 @@ CURRICULUM_CHUNK_OVERLAP=64
 CURRICULUM_RERANK_ENABLED=true
 CURRICULUM_VECTOR_ENABLED=true
 CURRICULUM_VECTOR_REQUIRED=false
+CURRICULUM_VECTOR_MIN_SIMILARITY=0.5
 CURRICULUM_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
 CURRICULUM_EMBEDDING_MODEL_DIR=./data/models/bge-small-zh-v1.5
 CURRICULUM_EMBEDDING_DEVICE=cpu

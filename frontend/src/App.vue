@@ -722,7 +722,7 @@
               <div v-if="record.records.length" class="curriculum-hit-list">
                 <article v-for="hit in record.records" :key="`${record.id}-${hit.chunk_id}`">
                   <strong>{{ hit.source }} · 片段 {{ hit.source_index }}</strong>
-                  <span>综合 {{ formatScore(hit.score) }} · 向量 {{ formatScore(hit.vector_score) }} · BM25 {{ formatScore(hit.bm25_score) }}</span>
+                  <span>综合 {{ formatScore(hit.score) }} · 余弦相似度 {{ formatScore(hit.vector_score) }} · BM25 原始分 {{ formatScore(hit.bm25_score) }}</span>
                   <p>{{ hit.content }}</p>
                 </article>
               </div>

@@ -65,6 +65,10 @@ class Settings:
         "CURRICULUM_VECTOR_REQUIRED",
         "false",
     ).strip().lower() in {"1", "true", "yes", "on"}
+    curriculum_vector_min_similarity: float = min(
+        1.0,
+        max(0.0, float(os.getenv("CURRICULUM_VECTOR_MIN_SIMILARITY", "0.5"))),
+    )
     curriculum_embedding_model: str = os.getenv(
         "CURRICULUM_EMBEDDING_MODEL",
         "BAAI/bge-small-zh-v1.5",
