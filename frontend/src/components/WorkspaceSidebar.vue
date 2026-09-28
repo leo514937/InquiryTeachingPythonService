@@ -1,23 +1,23 @@
 <template>
   <aside class="workspace-sidebar" :class="{ collapsed }">
     <div class="sidebar-actions">
-      <button class="sidebar-action primary" type="button" title="新建会话" @click="$emit('new-session')"><Plus :size="18" /><span>新建教案</span></button>
+      <button class="sidebar-action primary" type="button" title="新建会话" @click="$emit('new-session')"><Plus :size="18" /><span>{{ labels.newSession }}</span></button>
       <label class="sidebar-search" title="搜索会话">
         <Search :size="17" />
-        <input v-model="searchText" type="search" placeholder="搜索教案" />
+        <input v-model="searchText" type="search" :placeholder="labels.searchPlaceholder" />
       </label>
     </div>
 
     <template v-if="!collapsed">
       <section class="sidebar-session-section">
-        <div class="sidebar-section-head"><span>我的教案</span><button type="button" title="删除当前会话" :disabled="!session" @click="$emit('delete-session')"><Trash2 :size="15" /></button></div>
+        <div class="sidebar-section-head"><span>{{ labels.mySessions }}</span><button type="button" title="删除当前会话" :disabled="!session" @click="$emit('delete-session')"><Trash2 :size="15" /></button></div>
         <select :value="selectedSessionId" :disabled="uploading || !sessions.length" @change="$emit('select-session', ($event.target as HTMLSelectElement).value)">
           <option v-if="!sessions.length" value="">暂无会话</option>
           <option v-for="item in filteredSessions" :key="item.id" :value="item.id">{{ item.topic }} · {{ item.flow_display_name }}</option>
         </select>
-        <p v-if="sessions.length && !filteredSessions.length" class="sidebar-empty">没有匹配的教案</p>
+        <p v-if="sessions.length && !filteredSessions.length" class="sidebar-empty">{{ labels.noMatch }}</p>
       </section>
-      <div class="sidebar-section-head stage-section-head"><span>教学流程</span><small v-if="session">{{ progress }}</small></div>
+      <div class="sidebar-section-head stage-section-head"><span>{{ labels.flowLabel }}</span><small v-if="session">{{ progress }}</small></div>
     </template>
 
     <StageTimeline
@@ -28,7 +28,7 @@
       :output="output"
       @select-stage="$emit('select-stage', $event)"
     />
-    <div v-else class="sidebar-blank"><BookOpen :size="20" /><span>选择或新建教案</span></div>
+    <div v-else class="sidebar-blank"><BookOpen :size="20" /><span>{{ labels.selectOrCreate }}</span></div>
   </aside>
 </template>
 
@@ -49,6 +49,7 @@ const props = defineProps<{
   progress: string;
   uploading: boolean;
   search: string;
+  role_category?: "teacher" | "study_travel";
   output: (stageId: string) => StageOutput | undefined;
 }>();
 
@@ -59,6 +60,15 @@ const emit = defineEmits<{
   'select-session': [id: string];
   'select-stage': [id: string];
 }>();
+
+const labels = computed(() => ({
+  newSession: "新建草案",
+  searchPlaceholder: "搜索草案",
+  mySessions: "我的草案",
+  flowLabel: "流程",
+  noMatch: "没有匹配的草案",
+  selectOrCreate: "选择或新建草案",
+}));
 
 const searchText = computed({ get: () => props.search, set: (value: string) => emit('update:search', value) });
 const filteredSessions = computed(() => {

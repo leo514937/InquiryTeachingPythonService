@@ -2,7 +2,7 @@
   <div v-if="visible" class="draft-review-overlay">
     <section class="draft-review-canvas" role="dialog" aria-modal="true" aria-label="草案审阅">
       <header class="draft-review-overlay-head">
-        <div><p class="section-kicker">教学方案审阅</p><h2>{{ proposal ? '草案差异审阅' : 'Markdown 预览' }}</h2><span>{{ description }}</span></div>
+        <div><p class="section-kicker">{{ labels.reviewLabel }}</p><h2>{{ proposal ? '草案差异审阅' : 'Markdown 预览' }}</h2><span>{{ description }}</span></div>
         <div class="draft-review-overlay-actions">
           <span v-if="proposal" class="draft-proposal-status" :class="proposal.status">{{ proposalStatusLabel(proposal.status) }}</span>
           <button v-if="proposal" type="button" :disabled="!hasPending" @click="$emit('apply-all', 'accept')">全部接受</button>
@@ -41,8 +41,14 @@ import type { DraftProposal, DraftProposalSegment } from "@/types";
 const props = defineProps<{
   visible: boolean; proposal: DraftProposal | null; description: string; segments: DraftProposalSegment[]; activeSegmentId: string | null; blocks: { id: string; raw: string }[]; activeBlockId: string | null;
   render: (value: string) => string; proposalStatusLabel: (value: DraftProposal['status']) => string; segmentStatusLabel: (value: DraftProposalSegment['status']) => string; segmentLabel: (value: DraftProposalSegment) => string; segmentSummary: (value: DraftProposalSegment) => string;
+  role_category?: "teacher" | "study_travel";
 }>();
 const emit = defineEmits<{ close: []; 'apply-all': [action: 'accept' | 'reject']; apply: [id: string, action: 'accept' | 'reject']; 'select-segment': [id: string]; 'preview-ready': [element: HTMLElement] }>();
+
+const labels = computed(() => ({
+  reviewLabel: "草案审阅",
+}));
+
 const preview = ref<HTMLElement | null>(null);
 const hasPending = computed(() => props.segments.some((segment) => segment.status === 'pending'));
 onMounted(() => { if (preview.value) emit('preview-ready', preview.value); });

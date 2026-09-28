@@ -48,6 +48,20 @@
 
         <section v-else-if="activeView === 'sources'" class="knowledge-admin-sources">
           <div class="knowledge-admin-filter-bar">
+            <div class="role-category-tabs">
+              <button
+                :class="{ active: selectedRoleCategory === 'teacher' }"
+                @click="selectedRoleCategory = 'teacher'"
+              >
+                教师类知识库
+              </button>
+              <button
+                :class="{ active: selectedRoleCategory === 'study_travel' }"
+                @click="selectedRoleCategory = 'study_travel'"
+              >
+                研学类知识库
+              </button>
+            </div>
             <label><span>资料分类</span><select v-model="viewCategory"><option value="all">全部资料</option><option value="curriculum">课程与课标</option><option value="ecology">昆虫与植物生态</option><option value="rural_revitalization">乡村振兴</option></select></label>
             <label><span>审核状态</span><select v-model="reviewStatus"><option value="">全部状态</option><option value="draft">草稿</option><option value="in_review">审核中</option><option value="published">已发布</option><option value="archived">已归档</option></select></label>
             <button type="button" :class="{ active: advancedFilters }" @click="advancedFilters = !advancedFilters"><SlidersHorizontal :size="15" />高级筛选<span v-if="advancedFilterCount">{{ advancedFilterCount }}</span></button>
@@ -129,6 +143,7 @@ const activeView = ref<AdminView>(initialView());
 const drawerMode = ref<DrawerMode>("none");
 const selectedId = ref("");
 const searchQuery = ref("");
+const selectedRoleCategory = ref<"teacher" | "study_travel">("teacher");
 const viewCategory = ref<"all" | KnowledgeCategory>("all");
 const reviewStatus = ref("");
 const policyLayer = ref<"" | PolicyLayer>("");

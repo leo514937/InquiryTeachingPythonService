@@ -16,6 +16,7 @@
     @toggle-theme="toggleTheme"
     @logout="logout"
     @open-graph-admin="openGraphAdmin"
+    @switch-role="handleRoleSwitch"
   />
   <div
     class="workspace-grid"
@@ -36,6 +37,7 @@
       :uploading="isUploadingFile"
       :search="sessionSearchQuery"
       :output="activeStageOutput"
+      :role-category="currentRole"
       @update:search="sessionSearchQuery = $event"
       @new-session="showNewSessionModal = true"
       @delete-session="handleDeleteSession"
@@ -126,6 +128,7 @@
         :cursor-line="currentDraftCursorLine"
         :selection-label="currentSelectionReferenceLabel"
         :attached-label="attachedChatSelectionLabel"
+        :role-category="currentRole"
         @previous="goPreviousStage"
         @next="goNextStage"
         @save="saveDraftToServer"
@@ -171,6 +174,7 @@
       :segment-status-label="segmentStatusLabel"
       :segment-label="draftSegmentLabel"
       :segment-summary="reviewSegmentSummary"
+      :role-category="currentRole"
       @close="closeDraftReviewOverlay"
       @apply-all="applyAllDraftProposalActions"
       @apply="(id, action) => applyDraftProposalAction(id, action)"
@@ -567,13 +571,13 @@
     <!-- New Session Modal -->
     <div v-if="showNewSessionModal" class="modal-overlay" @click.self="showNewSessionModal = false">
       <div class="modal-content glass">
-        <h3>新建探究会话</h3>
+        <h3>新建会话</h3>
         <label class="field">
           <span>课题名称</span>
           <input v-model="topicInput" class="input" placeholder="例如：光的反射" />
         </label>
         <label class="field">
-          <span>选择教学流</span>
+          <span>选择流程</span>
           <select v-model="newSessionFlowName" class="input">
             <option v-for="flow in flows" :key="flow.name" :value="flow.name">
               {{ flow.display_name }} ({{ flow.stage_count }}阶段)
@@ -695,6 +699,9 @@ const activeStreamRequestId = ref<string | null>(null);
 const activeStreamAbortController = ref<AbortController | null>(null);
 const interruptRequested = ref(false);
 const themeMode = ref<"dark" | "light">("light");
+const currentRole = ref<"teacher" | "study_travel">(
+  (localStorage.getItem("user_role") as "teacher" | "study_travel") || "teacher"
+);
 const saveSuccessVisible = ref(false);
 const workflowPhase = ref<"idle" | "guide" | "draft" | "expert">("idle");
 const workflowStatusText = ref("准备就绪");
@@ -816,6 +823,44 @@ function toggleLeftSidebar() {
 
 function toggleRightSidebar() {
   rightSidebarVisible.value = !rightSidebarVisible.value;
+}
+
+async function loadSessions() {
+  try {
+    sessions.value = await getSessions(currentRole.value);
+  } catch (error: any) {
+    // 错误处理
+  }
+}
+
+async function handleRoleSwitch(role: "teacher" | "study_travel") {
+  currentRole.value = role;
+  localStorage.setItem("user_role", role);
+  selectedExpertId.value = "";
+  // 切换角色时清空当前会话和草案状态，确保教师工作台和研学基地工作台的草案隔离
+  currentSession.value = null;
+  selectedSessionId.value = "";
+  draftContent.value = "";
+  draftProposal.value = null;
+  draftStreamingContent.value = "";
+  draftWorkbenchState.value = "idle";
+  lastDraftSelection.value = null;
+  attachedChatSelection.value = null;
+  attachedChatSelectionLabel.value = "";
+
+  const [flowList, expertList] = await Promise.all([
+    getFlows(role),
+    getExperts(),
+  ]);
+  flows.value = flowList;
+  experts.value = expertList;
+  newSessionFlowName.value = flowList[0]?.name ?? "";
+
+  // 重新加载该角色下的会话列表，并自动打开最新会话
+  await loadSessions();
+  if (sessions.value[0]) {
+    await loadSession(sessions.value[0].id, true, false, false, currentRole.value);
+  }
 }
 
 function updateWorkflowStatus(
@@ -953,9 +998,9 @@ const draftVisualLines = computed(() => {
 
 const draftWorkbenchEmptyText = computed(() => {
   if (!draftContent.value.trim()) {
-    return "草案模式已开启，发送消息后会先生成一版初稿。";
+    return `草案模式已开启，发送消息后会先生成一版初稿。`;
   }
-  return "草案模式已开启。编辑已有草案时，请先选中右侧要修改的一段，再发送给草案编辑 Agent。";
+  return `草案模式已开启。编辑已有草案时，请先选中右侧要修改的一段，再发送给草案编辑 Agent。`;
 });
 
 const draftProposalDescription = computed(() => {
@@ -963,9 +1008,9 @@ const draftProposalDescription = computed(() => {
     return "";
   }
   if (draftProposal.value.proposal_kind === "edit") {
-    return "当前候选草案保留整篇视图，并重点高亮了本次命中的修改片段。";
+    return `当前候选草案保留整篇视图，并重点高亮了本次命中的修改片段。`;
   }
-  return "当前候选草案与已采纳草案的差异如下。";
+  return `当前候选草案与已采纳草案的差异如下。`;
 });
 
 const activeReviewSegment = computed(() => {
@@ -1316,14 +1361,19 @@ function onDraftEditorInput() {
 async function refreshWorkspace() {
   statusText.value = "刷新流程与会话中...";
   const [flowList, sessionList, expertList] = await Promise.all([
-    getFlows(),
-    getSessions(),
+    getFlows(currentRole.value),
+    getSessions(currentRole.value),
     getExperts(),
   ]);
   flows.value = flowList;
   sessions.value = sessionList;
   experts.value = expertList;
-  if (!newSessionFlowName.value && flowList[0]) {
+  if (!flowList.length) {
+    newSessionFlowName.value = "";
+    statusText.value = "工作区已刷新";
+    return;
+  }
+  if (!flowList.some((flow) => flow.name === newSessionFlowName.value)) {
     newSessionFlowName.value = flowList[0].name;
   }
   statusText.value = "工作区已刷新";
@@ -1386,11 +1436,12 @@ async function loadSession(
   loadMessages = true,
   preserveWarning = false,
   preserveGraphContext = false,
+  roleCategory: string = "teacher",
 ) {
   const keepGraphContext = graphContextSessionId.value === sessionId
     && (preserveGraphContext || !loadMessages);
   const [session, files] = await Promise.all([
-    getSession(sessionId),
+    getSession(sessionId, roleCategory as "teacher" | "study_travel"),
     getSessionFiles(sessionId),
   ]);
   if (!preserveWarning) {
@@ -1423,7 +1474,7 @@ async function loadSession(
 }
 
 async function selectSession(sessionId: string) {
-  await loadSession(sessionId, true);
+  await loadSession(sessionId, true, false, false, currentRole.value);
 }
 
 function openFilePicker() {
@@ -1882,9 +1933,9 @@ async function createWorkspaceSession() {
     statusText.value = "请先输入课题名称";
     return;
   }
-  const created = await createSession(topic, newSessionFlowName.value);
+  const created = await createSession(topic, newSessionFlowName.value, currentRole.value);
   sessions.value = [created, ...sessions.value.filter((item) => item.id !== created.id)];
-  await loadSession(created.id, true);
+  await loadSession(created.id, true, false, false, currentRole.value);
   statusText.value = `已创建会话：${topic}`;
 }
 
@@ -1979,8 +2030,8 @@ async function saveDraftToServer() {
   if (!currentSession.value || !selectedStageId.value) {
     return;
   }
-  await saveDraft(currentSession.value.id, selectedStageId.value, draftContent.value);
-  await loadSession(currentSession.value.id, false);
+  await saveDraft(currentSession.value.id, selectedStageId.value, draftContent.value, currentRole.value);
+  await loadSession(currentSession.value.id, false, false, false, currentRole.value);
   draftWorkbenchState.value = draftContent.value.trim() ? "save_ready" : "idle";
   statusText.value = "草稿已保存";
   saveSuccessVisible.value = true;

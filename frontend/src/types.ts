@@ -9,7 +9,11 @@ export type AuthUser = {
   id: string;
   username: string;
   is_admin: boolean;
+  user_role: UserRole;
 };
+
+export type UserRole = "teacher" | "study_travel";
+export type RoleCategory = "teacher" | "study_travel" | "shared";
 
 export type ExpertAgentItem = {
   id: string;
@@ -17,6 +21,7 @@ export type ExpertAgentItem = {
   role: string;
   description: string;
   capabilities: string[];
+  role_category: RoleCategory;
 };
 
 export type KnowledgeCategory = "curriculum" | "ecology" | "rural_revitalization";

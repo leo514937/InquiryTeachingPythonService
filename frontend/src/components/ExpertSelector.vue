@@ -10,7 +10,7 @@
     >
       <Bot :size="16" />
       <span class="expert-selector-label">本轮咨询：</span>
-      <strong>{{ selectedExpert?.name || "主导师" }}</strong>
+      <strong>{{ selectedExpert?.name || defaultMainTutor.label }}</strong>
       <ChevronDown :size="15" :class="{ rotated: open }" />
     </button>
 
@@ -24,7 +24,7 @@
         @click="selectExpert('')"
       >
         <GraduationCap :size="18" />
-        <span><strong>主导师</strong><small>阶段引导、草案生成与教学方案推进</small></span>
+        <span><strong>{{ defaultMainTutor.label }}</strong><small>{{ defaultMainTutor.description }}</small></span>
         <Check v-if="!modelValue" :size="16" />
       </button>
       <button
@@ -54,12 +54,25 @@ const props = defineProps<{
   modelValue: string;
   experts: ExpertAgentItem[];
   disabled?: boolean;
+  role_category?: "teacher" | "study_travel";
 }>();
 
 const emit = defineEmits<{ "update:modelValue": [value: string] }>();
 const open = ref(false);
 const rootRef = ref<HTMLElement | null>(null);
 const selectedExpert = computed(() => props.experts.find((expert) => expert.id === props.modelValue) || null);
+const defaultMainTutor = computed(() => {
+  if (props.role_category === "study_travel") {
+    return {
+      label: "研学主导师",
+      description: "阶段引导、方案生成与研学基地流程推进",
+    };
+  }
+  return {
+    label: "主导师",
+    description: "阶段引导、草案生成与教学方案推进",
+  };
+});
 
 function toggle() {
   open.value = !open.value;
