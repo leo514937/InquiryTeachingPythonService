@@ -145,6 +145,10 @@ class Settings:
         1.0,
         float(os.getenv("GLOBI_RUNTIME_TIMEOUT_SECONDS", "10")),
     )
+    globi_runtime_max_attempts: int = max(
+        1,
+        min(5, int(os.getenv("GLOBI_RUNTIME_MAX_ATTEMPTS", "3"))),
+    )
     globi_runtime_max_entities: int = max(
         1,
         min(3, int(os.getenv("GLOBI_RUNTIME_MAX_ENTITIES", "3"))),

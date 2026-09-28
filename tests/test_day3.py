@@ -3790,7 +3790,9 @@ class AgentArchitectureApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.text)
             events = parse_sse(response.text)
             event_names = [name for name, _payload in events]
+            self.assertIn("graph_progress", event_names)
             self.assertIn("graph", event_names)
+            self.assertLess(event_names.index("graph_progress"), event_names.index("graph"))
             self.assertLess(event_names.index("graph"), event_names.index("delta"))
             graph_event = next(payload for name, payload in events if name == "graph")
             self.assertEqual(graph_event["graph"]["globi_runtime"]["query_id"], "globi_query_chat_test")

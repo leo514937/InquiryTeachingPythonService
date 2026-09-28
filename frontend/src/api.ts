@@ -235,6 +235,7 @@ export async function exportSession(sessionId: string): Promise<Blob> {
 type StreamHandlers = {
   stage?: (data: any) => void | Promise<void>;
   graph?: (data: any) => void | Promise<void>;
+  graph_progress?: (data: any) => void | Promise<void>;
   agent?: (data: any) => void | Promise<void>;
   delta?: (data: any) => void | Promise<void>;
   draft?: (data: any) => void | Promise<void>;
@@ -521,6 +522,54 @@ export async function getKnowledgeGraphCandidates(
     }),
   });
   return payload.data;
+}
+
+export async function streamKnowledgeGraphCandidates(
+  sessionId: string,
+  message: string,
+  expertId: string,
+  handlers: Pick<StreamHandlers, "graph" | "graph_progress">,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/knowledge/graph/candidates/stream`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, message, expert_id: expertId }),
+    signal,
+  });
+  if (!response.ok || !response.body) throw new Error(await response.text());
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  const dispatch = async (chunk: string) => {
+    const lines = chunk.split(/\r?\n/);
+    const eventName = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() || "message";
+    const rawData = lines.filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart()).join("\n");
+    if (!rawData) return;
+    const handler = handlers[eventName as keyof typeof handlers];
+    if (!handler) return;
+    try {
+      await handler(JSON.parse(rawData));
+    } catch {
+      await handler({ text: rawData });
+    }
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let splitIndex = buffer.indexOf("\n\n");
+    while (splitIndex >= 0) {
+      await dispatch(buffer.slice(0, splitIndex));
+      buffer = buffer.slice(splitIndex + 2);
+      splitIndex = buffer.indexOf("\n\n");
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) await dispatch(buffer);
 }
 
 export async function getKnowledgeGraphAdmin(): Promise<KnowledgeGraphPayload> {

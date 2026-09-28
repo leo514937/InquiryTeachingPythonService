@@ -341,6 +341,14 @@ export type KnowledgeGraphPayload = {
   } | null;
 };
 
+export type GraphProgressState = {
+  phase: string;
+  percent: number;
+  message: string;
+  completed?: number;
+  total?: number;
+};
+
 export type GraphSelectionPayload = {
   entity_ids: string[];
   relation_ids: string[];

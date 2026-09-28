@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import json
 import shutil
 import tempfile
@@ -5,10 +7,12 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.agents.registry import get_agent_registry
 from app.core.auth import get_admin_user, get_current_user
+from app.core.sse import format_sse
 from app.db.database import get_db
 from app.db.models import UserModel
 from app.schemas import (
@@ -124,6 +128,78 @@ async def graph_candidates(
     else:
         data = local_data
     return {"code": 0, "message": "success", "data": data}
+
+
+@router.post("/graph/candidates/stream")
+async def stream_graph_candidates(
+    payload: GraphCandidateRequest,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    """Stream local/GloBI graph progress for explicit graph refreshes."""
+    sess = get_owned_session(db, payload.session_id, user.id)
+    flow = get_flow(sess.flow_name)
+    stage = (
+        flow["stages"][sess.current_stage_index]
+        if sess.current_stage_index < len(flow["stages"])
+        else {}
+    )
+    if payload.expert_id and get_agent_registry().selectable_expert(payload.expert_id) is None:
+        raise HTTPException(status_code=400, detail="未知或不可选择的专家 Agent")
+    local_data = KnowledgeGraphService(db).find_candidate_graph(
+        message=payload.message,
+        expert_id=payload.expert_id or "",
+        topic=sess.topic,
+        stage=stage,
+    )
+
+    async def events():
+        yield format_sse(
+            "graph_progress",
+            {
+                "phase": "local_ready",
+                "percent": 8,
+                "message": "本地图谱已完成，开始查询 GloBI 全球关系",
+            },
+        )
+        if (payload.expert_id or "") not in SUPPORTED_EXPERTS:
+            yield format_sse("graph", {"graph": local_data})
+            return
+        progress_queue: asyncio.Queue[dict] = asyncio.Queue()
+        service = GlobiRuntimeService(db)
+        task = asyncio.create_task(
+            service.query(
+                message=payload.message,
+                expert_id=payload.expert_id or "",
+                user_id=user.id,
+                session_id=sess.id,
+                progress=progress_queue.put,
+            )
+        )
+        try:
+            while not task.done():
+                try:
+                    item = await asyncio.wait_for(progress_queue.get(), timeout=0.25)
+                except asyncio.TimeoutError:
+                    continue
+                yield format_sse("graph_progress", item)
+        except BaseException:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            raise
+        while not progress_queue.empty():
+            yield format_sse("graph_progress", progress_queue.get_nowait())
+        try:
+            runtime_data = await task
+        except Exception:
+            runtime_data = service.empty_payload(
+                status="failed",
+                warning="GloBI 查询暂时不可用，已继续使用本地图谱",
+            )
+        yield format_sse("graph", {"graph": service.merge_graphs(local_data, runtime_data)})
+
+    return StreamingResponse(events(), media_type="text/event-stream")
 
 
 @router.get("/graph")

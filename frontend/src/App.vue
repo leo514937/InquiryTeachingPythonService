@@ -148,6 +148,7 @@
         :agent-name="activeGraphExpert?.name || ''"
         :query="lastGraphQuery"
         :error="knowledgeGraphError"
+        :progress="knowledgeGraphProgress"
         @close="showGraphInRightPanel = false"
         @refresh="openKnowledgeGraphPanel"
         @toggle-node="toggleGraphEntity"
@@ -621,7 +622,7 @@ import {
   getKnowledgeSources,
   getCurriculumRetrievals,
   getCurriculumStatus,
-  getKnowledgeGraphCandidates,
+  streamKnowledgeGraphCandidates,
   getKnowledgeGraphAdmin,
   exportSession,
   getFlows,
@@ -654,6 +655,7 @@ import type {
   FlowInfo,
   FlowStage,
   GraphSelectionPayload,
+  GraphProgressState,
   KnowledgeGraphPayload,
   MessageItem,
   SessionDetail,
@@ -742,6 +744,11 @@ const graphAdminData = ref<KnowledgeGraphPayload>({
 });
 const isLoadingKnowledgeGraph = ref(false);
 const knowledgeGraphError = ref("");
+const knowledgeGraphProgress = ref<GraphProgressState>({
+  phase: "idle",
+  percent: 0,
+  message: "等待查询",
+});
 const knowledgeGraph = ref<KnowledgeGraphPayload>({
   entities: [],
   relations: [],
@@ -787,6 +794,7 @@ function resetKnowledgeGraphState() {
   showKnowledgeGraphPanel.value = false;
   isLoadingKnowledgeGraph.value = false;
   knowledgeGraphError.value = "";
+  knowledgeGraphProgress.value = { phase: "idle", percent: 0, message: "等待查询" };
   clearKnowledgeGraphPayload();
   lastGraphQuery.value = "";
   lastGraphExpertId.value = "";
@@ -2029,26 +2037,34 @@ async function refreshKnowledgeGraph(query: string, expertId: string, sessionId:
   const requestSequence = ++knowledgeGraphRequestSequence;
   isLoadingKnowledgeGraph.value = true;
   knowledgeGraphError.value = "";
+  knowledgeGraphProgress.value = { phase: "starting", percent: 3, message: "正在准备图谱查询" };
   try {
-    const graph = await getKnowledgeGraphCandidates(sessionId, normalizedQuery, expertId);
-    if (
-      requestSequence !== knowledgeGraphRequestSequence
-      || graphContextSessionId.value !== sessionId
-      || lastGraphQuery.value !== normalizedQuery
-      || lastGraphExpertId.value !== expertId
-    ) return;
-    knowledgeGraph.value = graph;
-    const recommendedPath = graph.paths.find((path) => graph.recommended_path_ids.includes(path.id));
-    selectedGraphEntityIds.value = recommendedPath?.entity_ids?.length
-      ? [...recommendedPath.entity_ids]
-      : [];
-    selectedGraphRelationIds.value = recommendedPath?.relation_ids?.length
-      ? [...recommendedPath.relation_ids]
-      : [];
+    await streamKnowledgeGraphCandidates(sessionId, normalizedQuery, expertId, {
+      graph_progress: (data) => {
+        if (requestSequence !== knowledgeGraphRequestSequence) return;
+        knowledgeGraphProgress.value = data as GraphProgressState;
+      },
+      graph: (data) => {
+        if (
+          requestSequence !== knowledgeGraphRequestSequence
+          || graphContextSessionId.value !== sessionId
+          || lastGraphQuery.value !== normalizedQuery
+          || lastGraphExpertId.value !== expertId
+        ) return;
+        const graph = data.graph as KnowledgeGraphPayload | undefined;
+        if (!graph) return;
+        knowledgeGraph.value = graph;
+        const recommendedPath = graph.paths.find((path) => graph.recommended_path_ids.includes(path.id));
+        selectedGraphEntityIds.value = recommendedPath?.entity_ids?.length ? [...recommendedPath.entity_ids] : [];
+        selectedGraphRelationIds.value = recommendedPath?.relation_ids?.length ? [...recommendedPath.relation_ids] : [];
+        knowledgeGraphProgress.value = { phase: "complete", percent: 100, message: "图谱加载完成" };
+      },
+    });
   } catch (error: any) {
     if (requestSequence !== knowledgeGraphRequestSequence) return;
     clearKnowledgeGraphPayload();
     knowledgeGraphError.value = error.message || String(error);
+    knowledgeGraphProgress.value = { phase: "failed", percent: 100, message: "图谱查询失败" };
   } finally {
     if (requestSequence === knowledgeGraphRequestSequence) {
       isLoadingKnowledgeGraph.value = false;
@@ -2245,6 +2261,7 @@ async function sendChat(options: SendChatOptions = {}) {
     showGraphInRightPanel.value = true;
     isLoadingKnowledgeGraph.value = true;
     knowledgeGraphError.value = "";
+    knowledgeGraphProgress.value = { phase: "starting", percent: 3, message: "正在准备图谱查询" };
   }
   isStreaming.value = true;
   activeStreamRequestId.value = requestId;
@@ -2328,6 +2345,17 @@ async function sendChat(options: SendChatOptions = {}) {
               ? graph.globi_runtime.warning
               : "";
           isLoadingKnowledgeGraph.value = false;
+          knowledgeGraphProgress.value = { phase: "complete", percent: 100, message: "图谱加载完成" };
+        },
+        graph_progress: (data) => {
+          if (
+            graphRequestSequence !== knowledgeGraphRequestSequence
+            || graphContextSessionId.value !== sessionId
+            || lastGraphQuery.value !== text
+            || lastGraphExpertId.value !== requestExpertId
+          ) return;
+          knowledgeGraphProgress.value = data as GraphProgressState;
+          isLoadingKnowledgeGraph.value = data.phase !== "complete";
         },
         agent: (data) => {
           const targetKey =
@@ -2475,6 +2503,7 @@ async function sendChat(options: SendChatOptions = {}) {
     if (graphRequestSequence && graphRequestSequence === knowledgeGraphRequestSequence) {
       isLoadingKnowledgeGraph.value = false;
       knowledgeGraphError.value = err?.message || String(err);
+      knowledgeGraphProgress.value = { phase: "failed", percent: 100, message: "图谱查询失败" };
     }
     if (shouldStreamDraftIntoEditor) {
       draftContent.value = draftContentBeforeRequest;

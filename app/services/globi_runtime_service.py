@@ -78,6 +78,10 @@ class GlobiRuntimeService:
     """
 
     _direction_cache: dict[tuple[str, str, tuple[str, ...]], _CacheEntry] = {}
+    _direction_inflight: dict[
+        tuple[str, str, tuple[str, ...]],
+        asyncio.Task[list[RuntimeInteraction]],
+    ] = {}
     _snapshot_cache: dict[str, _CacheEntry] = {}
     _cache_lock: asyncio.Lock | None = None
 
@@ -100,6 +104,7 @@ class GlobiRuntimeService:
     @classmethod
     def clear_cache(cls) -> None:
         cls._direction_cache.clear()
+        cls._direction_inflight.clear()
         cls._snapshot_cache.clear()
 
     @classmethod
@@ -122,35 +127,75 @@ class GlobiRuntimeService:
         expert_id: str,
         user_id: str,
         session_id: str,
+        progress: Callable[[dict], Awaitable[None]] | None = None,
     ) -> dict:
+        async def report(phase: str, percent: int, message: str, **extra) -> None:
+            if progress is not None:
+                await progress(
+                    {
+                        "phase": phase,
+                        "percent": percent,
+                        "message": message,
+                        **extra,
+                    }
+                )
+
         if expert_id not in SUPPORTED_EXPERTS:
             return self.empty_payload(status="skipped")
         if not self.settings.globi_runtime_enabled:
             return self.empty_payload(status="disabled", warning="GloBI 实时查询未启用")
 
+        await report("extracting", 15, "正在识别问题中的昆虫和植物")
         taxa = await self.extract_taxa(message)
         if not taxa:
+            await report("complete", 100, "未识别到可查询的物种实体")
             return self.empty_payload(
                 status="empty",
                 warning="未从问题中识别出可查询的昆虫或植物实体",
             )
 
+        await report(
+            "resolved",
+            30,
+            f"已识别 {len(taxa)} 个实体，准备查询双向关系",
+            queried_entities=[
+                {
+                    "mention": item.mention,
+                    "scientific_name": item.scientific_name,
+                    "entity_type": item.entity_type,
+                }
+                for item in taxa
+            ],
+        )
         tasks = []
         for taxon in taxa[: self.settings.globi_runtime_max_entities]:
             tasks.append(self._cached_direction(taxon.scientific_name, "source"))
             tasks.append(self._cached_direction(taxon.scientific_name, "target"))
-        results = await asyncio.gather(*tasks, return_exceptions=True)
         interactions: list[RuntimeInteraction] = []
         cache_flags: list[bool] = []
         errors: list[str] = []
-        for result in results:
+        completed = 0
+        for pending in asyncio.as_completed(tasks):
+            try:
+                result = await pending
+            except Exception as exc:  # preserve successful directions on partial failure
+                result = exc
             if isinstance(result, Exception):
                 errors.append(self._safe_error(result))
-                continue
-            rows, cache_hit = result
-            interactions.extend(rows)
-            cache_flags.append(cache_hit)
+            else:
+                rows, cache_hit = result
+                interactions.extend(rows)
+                cache_flags.append(cache_hit)
+            completed += 1
+            await report(
+                "querying",
+                30 + round(50 * completed / max(len(tasks), 1)),
+                f"正在获取全球关系（{completed}/{len(tasks)}）",
+                completed=completed,
+                total=len(tasks),
+            )
 
+        await report("building", 88, "正在去重并生成可交互子图")
         payload = self._build_graph(taxa, interactions)
         status = "success" if payload["relations"] else ("failed" if errors and not cache_flags else "empty")
         warning = "；".join(dict.fromkeys(errors))
@@ -171,6 +216,13 @@ class GlobiRuntimeService:
             "warning": warning,
         }
         self._store_snapshot(query_id, user_id, session_id, payload)
+        await report(
+            "complete",
+            100,
+            f"GloBI 查询完成，共整理 {len(payload['relations'])} 条关系",
+            relation_count=len(payload["relations"]),
+            status=status,
+        )
         return payload
 
     async def extract_taxa(self, message: str) -> list[RuntimeTaxon]:
@@ -282,8 +334,19 @@ class GlobiRuntimeService:
                 return list(entry.value), True
             if entry is not None:
                 self._direction_cache.pop(key, None)
-
-        rows = await self._fetch_direction(scientific_name, direction)
+            task = self._direction_inflight.get(key)
+            if task is None:
+                task = asyncio.create_task(
+                    self._fetch_direction(scientific_name, direction)
+                )
+                self._direction_inflight[key] = task
+        try:
+            rows = await asyncio.shield(task)
+        finally:
+            if task.done():
+                async with self._lock():
+                    if self._direction_inflight.get(key) is task:
+                        self._direction_inflight.pop(key, None)
         async with self._lock():
             self._direction_cache[key] = _CacheEntry(
                 value=tuple(rows),
@@ -303,13 +366,38 @@ class GlobiRuntimeService:
             ("includeObservations", "true"),
             ("limit", str(self.settings.globi_runtime_result_limit)),
         ]
-        async with self._semaphore:
-            async with self.http_client_factory() as client:
-                response = await client.get(GLOBI_API_URL, params=params)
-                response.raise_for_status()
-                if len(response.content) > self.settings.globi_runtime_max_response_bytes:
-                    raise ValueError("GloBI 返回内容超过运行时限制")
-                text = response.content.decode("utf-8-sig", errors="replace")
+        response_bytes = b""
+        max_attempts = max(1, int(getattr(self.settings, "globi_runtime_max_attempts", 3)))
+        for attempt in range(max_attempts):
+            try:
+                async with self._semaphore:
+                    async with self.http_client_factory() as client:
+                        async with client.stream("GET", GLOBI_API_URL, params=params) as response:
+                            response.raise_for_status()
+                            chunks: list[bytes] = []
+                            size = 0
+                            max_bytes = self.settings.globi_runtime_max_response_bytes
+                            async for chunk in response.aiter_bytes():
+                                if size + len(chunk) > max_bytes:
+                                    chunks.append(chunk[: max_bytes - size])
+                                    break
+                                chunks.append(chunk)
+                                size += len(chunk)
+                            response_bytes = b"".join(chunks)
+                break
+            except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPStatusError) as exc:
+                retryable = not isinstance(exc, httpx.HTTPStatusError) or (
+                    exc.response.status_code == 429 or exc.response.status_code >= 500
+                )
+                if not retryable or attempt + 1 >= max_attempts:
+                    raise
+                await asyncio.sleep(0.2 * (2**attempt))
+
+        text = response_bytes.decode("utf-8-sig", errors="replace")
+        # A byte cap may cut the final CSV record. Dropping the final partial line
+        # keeps all complete records instead of failing the entire direction.
+        if len(response_bytes) >= self.settings.globi_runtime_max_response_bytes:
+            text = text.rsplit("\n", 1)[0]
         reader = csv.DictReader(io.StringIO(text))
         normalizer = GlobiImportService(self.db)
         options = GlobiImportOptions(
@@ -558,9 +646,9 @@ class GlobiRuntimeService:
             "relations": [*local.get("relations", []), *runtime.get("relations", [])],
             "paths": [*local.get("paths", []), *runtime.get("paths", [])],
             "recommended_path_ids": [
-                *local.get("recommended_path_ids", []),
-                *runtime.get("recommended_path_ids", []),
-            ][:5],
+                *local.get("recommended_path_ids", [])[:5],
+                *runtime.get("recommended_path_ids", [])[:5],
+            ],
             "globi_runtime": runtime.get("globi_runtime"),
         }
 

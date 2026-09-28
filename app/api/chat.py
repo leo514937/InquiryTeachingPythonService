@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import datetime as dt
 import uuid
 
@@ -402,6 +403,7 @@ async def chat(
     )
     local_candidate: dict | None = None
     runtime_candidate: dict | None = None
+    runtime_query_required = False
     if is_runtime_graph_expert:
         local_candidate = graph_service.find_candidate_graph(
             message=payload.message,
@@ -423,18 +425,16 @@ async def chat(
             if snapshot_warning:
                 graph_warning = snapshot_warning
         else:
-            runtime_candidate = await runtime_service.query(
-                message=payload.message,
-                expert_id=selected_expert.id,
-                user_id=user.id,
-                session_id=sess.id,
-            )
-        if runtime_candidate is None:
+            # Run the network lookup inside the SSE generator so the client can
+            # receive real progress before GloBI finishes.
+            runtime_query_required = True
+        if runtime_candidate is None and not runtime_query_required:
             runtime_candidate = runtime_service.empty_payload(
                 status="expired",
                 warning=graph_warning,
             )
-        graph_payload = runtime_service.merge_graphs(local_candidate, runtime_candidate)
+        if runtime_candidate is not None:
+            graph_payload = runtime_service.merge_graphs(local_candidate, runtime_candidate)
 
     if payload.graph_selection is not None:
         graph_selection = payload.graph_selection
@@ -590,6 +590,62 @@ async def chat(
                 "draft_mode_enabled": session_snapshot["draft_mode_enabled"],
             },
         )
+        if runtime_query_required:
+            progress_queue: asyncio.Queue[dict] = asyncio.Queue()
+            yield format_sse(
+                "graph_progress",
+                {
+                    **agent_identity,
+                    "phase": "local_ready",
+                    "percent": 8,
+                    "message": "本地图谱已完成，开始查询 GloBI 全球关系",
+                },
+            )
+            query_task = asyncio.create_task(
+                runtime_service.query(
+                    message=payload.message,
+                    expert_id=selected_expert.id,
+                    user_id=user.id,
+                    session_id=session_snapshot["session_id"],
+                    progress=progress_queue.put,
+                )
+            )
+            try:
+                while not query_task.done():
+                    await ensure_chat_active()
+                    try:
+                        progress_event = await asyncio.wait_for(progress_queue.get(), timeout=0.25)
+                    except asyncio.TimeoutError:
+                        continue
+                    yield format_sse("graph_progress", {**agent_identity, **progress_event})
+            except BaseException:
+                query_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await query_task
+                raise
+            while not progress_queue.empty():
+                yield format_sse(
+                    "graph_progress",
+                    {**agent_identity, **progress_queue.get_nowait()},
+                )
+            try:
+                completed_runtime = await query_task
+            except Exception:
+                completed_runtime = runtime_service.empty_payload(
+                    status="failed",
+                    warning="GloBI 查询暂时不可用，已继续使用本地图谱",
+                )
+            session_snapshot["graph_payload"] = runtime_service.merge_graphs(
+                local_candidate or runtime_service.empty_payload(status="skipped"),
+                completed_runtime,
+            )
+            completed_runtime_context = runtime_service.format_context(
+                runtime_service.default_selection(completed_runtime)
+            )
+            session_snapshot["doc_input"] = RagService.merge_context(
+                session_snapshot["doc_input"],
+                completed_runtime_context,
+            )
         if session_snapshot["graph_payload"] is not None:
             yield format_sse(
                 "graph",
