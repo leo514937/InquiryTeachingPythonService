@@ -29,13 +29,15 @@ scene_router = APIRouter(prefix='/api/inquiry-scenes', tags=['inquiry-scenes'])
 @scene_router.get('')
 def list_scenes(q: str = Query('', max_length=100), db: Session = Depends(get_db),
                 user: UserModel = Depends(get_current_user)):
-    from app.workspace.scene_catalog import load_scenes
+    from app.workspace.scene_catalog import load_catalog, load_scenes
     resolve_workspace_role(db, user, 'teacher')
     query = q.strip().casefold()
+    catalog = load_catalog()
     scenes = [scene for scene in load_scenes().values()
               if not query or query in (scene.name + scene.description).casefold()]
     return {'data': [{'id': item.id, 'version': item.version, 'name': item.name,
-                      'description': item.description} for item in scenes]}
+                      'description': item.description,
+                      'has_configured_sources': any(catalog.source_groups[group] for group in item.source_groups)} for item in scenes]}
 
 
 @scene_router.get('/sources')

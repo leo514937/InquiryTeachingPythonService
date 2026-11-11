@@ -63,6 +63,19 @@ def test_selected_excerpt_is_sent_without_replacing_document(setup_document):
     assert get_workspace(ws, db, user)['data']['artifacts'][0]['version'] == 1
 
 
+def test_assistant_uses_new_saved_version_for_next_optimization(setup_document):
+    from copy import deepcopy
+    from app.workspace.api import LessonAssistantInput, LessonSave, lesson_assistant, save_lesson_document
+    db, user, ws, doc, calls = setup_document
+    content = deepcopy(doc['content'])
+    content['sections'][-1]['paragraphs'][-1]['text'] = '说明分类理由。'
+    saved = save_lesson_document(ws, doc['id'], LessonSave(expected_version=1, content=content), db, user)['data']
+    assert saved['version'] == 2
+    lesson_assistant(ws, doc['id'], LessonAssistantInput(expected_version=2, instruction='继续优化', selected_text='说明分类理由。'), db, user)
+    assert calls[-1]['document'] == '教学目标\n说明分类理由。'
+    assert calls[-1]['selection'] == '说明分类理由。'
+
+
 def test_invalid_model_response_does_not_modify_document(setup_document, monkeypatch):
     from app.workspace.api import LessonAssistantInput, lesson_assistant, get_workspace
     from app.workspace.integrations.llm import StrictLLM

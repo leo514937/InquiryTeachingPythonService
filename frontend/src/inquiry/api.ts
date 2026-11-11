@@ -1,6 +1,6 @@
 const base = import.meta.env.VITE_API_BASE?.replace(/\/$/, '') || `${window.location.protocol}//${window.location.hostname}:8010`;
 
-export type Scene = { id: string; name: string; description: string; version: number };
+export type Scene = { id: string; name: string; description: string; version: number; has_configured_sources?: boolean };
 export type Source = { id: string; title: string };
 export type Artifact = { id: string; type: string; version: number; content: Record<string, unknown>; source_refs: Array<Record<string, string>>; status: string; review_status: string; locked: boolean };
 export type Run = { id: string; status: string; error: string; warnings: string[]; nodes: Array<{id: string; capability: string; status: string}> };

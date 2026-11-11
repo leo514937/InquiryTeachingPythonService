@@ -39,6 +39,21 @@ def test_scene_catalog_route_is_registered():
     assert any(route.path == '/api/inquiry-scenes' for route in scene_router.routes)
 
 
+def test_scene_catalog_reports_configured_sources_without_claiming_authorization(monkeypatch):
+    from types import SimpleNamespace
+    import app.workspace.api as api
+    import app.workspace.scene_catalog as catalog
+
+    scenes = [catalog.Scene(id='empty', version=1, name='空场景', description='', intents=[], source_groups=['empty']),
+              catalog.Scene(id='configured', version=1, name='有配置', description='', intents=[], source_groups=['group'])]
+    monkeypatch.setattr(api, 'resolve_workspace_role', lambda *args: None)
+    monkeypatch.setattr(catalog, 'load_scenes', lambda: {scene.id: scene for scene in scenes})
+    monkeypatch.setattr(catalog, 'load_catalog', lambda: SimpleNamespace(source_groups={'empty': [], 'group': ['source-id']}))
+    result = api.list_scenes(q='', db=None, user=None)['data']
+    assert [scene['has_configured_sources'] for scene in result] == [False, True]
+    assert result[1]['id'] == 'configured'
+
+
 def test_diagnostics_route_requires_admin():
     from app.core.auth import get_admin_user
     from app.workspace.api import router

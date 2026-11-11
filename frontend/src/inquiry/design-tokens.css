@@ -1,0 +1,18 @@
+/* Project Review: rural-review-redesign.html; scoped to Inquiry Studio. */
+.inquiry-scroll {
+  --studio-ink: #183126;
+  --studio-muted: #5d7165;
+  --studio-line: #d9e3db;
+  --studio-green: #2f7d4f;
+  --studio-green-dark: #1f5d38;
+  --studio-soft: #e5f1e8;
+  --studio-bg: #f5f7f5;
+  --studio-surface: #fff;
+  --studio-subtle: #fbfcfb;
+  --studio-warning: #a66e12;
+  --studio-danger: #a34438;
+  --studio-radius: 18px;
+  --studio-control-radius: 10px;
+  --studio-shadow: 0 12px 30px #23453010;
+  --studio-font: Inter, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+}
