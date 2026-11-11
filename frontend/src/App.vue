@@ -5,6 +5,7 @@
     <p>暂时无法验证登录状态：{{ authRestoreError }}</p>
     <button class="primary-button" type="button" @click="restoreLoginState">重试</button>
   </div>
+  <InquiryStudio v-else-if="showInquiryStudio && inquiryAvailable" :admin="Boolean(currentUser?.is_admin)" @close="showInquiryStudio = false" />
   <div v-else class="workspace-page">
   <div v-if="workspaceLoadError" class="workspace-load-error" role="alert">
     {{ workspaceLoadError }}
@@ -23,12 +24,14 @@
     :theme-mode="themeMode"
     :current-role="currentRole"
     :workspace-roles="currentUser?.workspace_roles || []"
+    :inquiry-available="inquiryAvailable"
     @toggle-sidebar="toggleLeftSidebar"
     @toggle-theme="toggleTheme"
     @logout="logout"
     @open-graph-admin="openGraphAdmin"
     @open-task-center="showStudyTaskCenter = true"
     @open-user-guide="showUserGuide = true"
+    @open-inquiry="showInquiryStudio = true"
     @switch-role="handleRoleSwitch"
   />
   <StudyTaskCenter
@@ -657,6 +660,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import AuthPanel from "@/components/AuthPanel.vue";
+import InquiryStudio from "@/inquiry/InquiryStudio.vue";
+import { request as inquiryRequest } from "@/inquiry/api";
 import AppHeader from "@/components/AppHeader.vue";
 import ChatComposer from "@/components/ChatComposer.vue";
 import ConversationPanel from "@/components/ConversationPanel.vue";
@@ -781,6 +786,16 @@ const themeMode = ref<"dark" | "light">("light");
 const currentRole = ref<"teacher" | "study_travel" | "parent">(
   (localStorage.getItem("user_role") as "teacher" | "study_travel" | "parent") || "teacher"
 );
+const inquiryAvailable = ref(false);
+const showInquiryStudio = ref(false);
+watch(currentUser, async (user, _old, onCleanup) => {
+  let active = true;
+  onCleanup(() => { active = false; });
+  inquiryAvailable.value = false;
+  if (!user || !user.workspace_roles.includes('teacher')) { showInquiryStudio.value = false; return; }
+  try { await inquiryRequest('/api/inquiry-workspaces'); if (active) inquiryAvailable.value = true; }
+  catch { if (active) inquiryAvailable.value = false; }
+}, { immediate: true });
 const homeContext = ref<HomeContext>({ child_age_grade: "", available_time: "", activity_space: "", available_materials: "", adult_accompaniment: "" });
 const saveSuccessVisible = ref(false);
 const workflowPhase = ref<"idle" | "guide" | "draft" | "expert">("idle");

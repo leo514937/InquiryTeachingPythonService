@@ -19,6 +19,7 @@
     <div v-else class="header-context header-context-empty">{{ currentRole === 'parent' ? '输入探究主题，开始设计家庭活动' : '创建一个课题，开始协同设计' }}</div>
 
     <div class="header-actions">
+      <button v-if="inquiryAvailable && currentRole === 'teacher'" class="header-admin-button" type="button" :disabled="streaming || saving" @click="$emit('open-inquiry')">Inquiry Studio</button>
       <div v-if="workspaceRoles.length > 1" class="role-switcher">
         <button v-if="workspaceRoles.includes('teacher')"
           :class="{ active: currentRole === 'teacher' }"
@@ -80,6 +81,7 @@ const props = defineProps<{
   themeMode: 'light' | 'dark';
   currentRole: UserRole;
   workspaceRoles: UserRole[];
+  inquiryAvailable: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -89,6 +91,7 @@ const emit = defineEmits<{
   'open-graph-admin': [];
   'open-task-center': [];
   'open-user-guide': [];
+  'open-inquiry': [];
   logout: [];
   'switch-role': [role: UserRole];
 }>();
@@ -121,6 +124,11 @@ const expertId = computed({
 </script>
 
 <style scoped>
+@media (max-width: 680px) {
+  .workspace-header { grid-template-columns: auto minmax(0, 1fr); }
+  .header-actions { min-width: 0; overflow-x: auto; justify-content: flex-start; }
+  .header-actions > * { flex-shrink: 0; }
+}
 .role-switcher {
   display: flex;
   gap: 4px;

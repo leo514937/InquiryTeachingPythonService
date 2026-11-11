@@ -1,0 +1,7 @@
+version: 1
+strategies:
+  - {id: general_inquiry, subject: '', phases: [提出问题, 寻找证据, 交流发现], guidance: 选择适合教学主题的方法，缺失条件需标明。}
+  - {id: science_inquiry, subject: 科学, phases: [观察, 提问, 比较, 解释], guidance: 按主题选择观察或比较，实验条件与安全须确认。}
+  - {id: mathematics_inquiry, subject: 数学, phases: [提问, 收集数据, 表示, 推理], guidance: 使用可验证数据，缺少数据时保留空表。}
+  - {id: language_inquiry, subject: 语文, phases: [阅读, 思考, 交流, 表达], guidance: 使用适龄文本并尊重学生隐私。}
+  - {id: interdisciplinary, subject: 跨学科, phases: [调查, 协作, 设计, 分享], guidance: 结合可确认资源进行协作设计。}

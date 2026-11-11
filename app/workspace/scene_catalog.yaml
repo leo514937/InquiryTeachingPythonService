@@ -1,0 +1,9 @@
+version: 1
+scenes:
+  - {id: campus_life, version: 1, name: 校园生活, description: 校园环境与生活实践, intents: [curriculum, teaching_case, environment], source_groups: []}
+  - {id: science_lab, version: 1, name: 科学实验, description: 科学观察与实验安全, intents: [curriculum, teaching_case, resources], source_groups: []}
+  - {id: nature, version: 1, name: 自然生态, description: 植物与自然环境观察, intents: [curriculum, teaching_case, environment], source_groups: []}
+  - {id: local_culture, version: 1, name: 地方文化, description: 文化与社区故事, intents: [curriculum, teaching_case, environment], source_groups: []}
+  - {id: data_survey, version: 1, name: 数据调查, description: 数据收集与分析, intents: [curriculum, teaching_case, assessment], source_groups: []}
+  - {id: custom, version: 1, name: 自定义场景, description: 使用已授权的教学资料, intents: [curriculum, teaching_case], source_groups: []}
+source_groups: {}

@@ -1,0 +1,8 @@
+version: 1
+profiles:
+  minimal_lesson:
+    version: 1
+    nodes:
+      - {id: context, capability: context.enrich@1, depends_on: [], inputs: {}}
+      - {id: bundle, capability: lesson.bundle@1, depends_on: [context], inputs: {}}
+      - {id: quality, capability: quality.rules@1, depends_on: [bundle], inputs: {}}

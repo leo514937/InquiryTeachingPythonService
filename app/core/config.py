@@ -10,6 +10,9 @@ load_dotenv(BASE_DIR / ".env")
 
 
 class Settings:
+    inquiry_workspace_enabled: bool = os.getenv(
+        "INQUIRY_WORKSPACE_ENABLED", "false"
+    ).strip().lower() in {"1", "true", "yes", "on"}
     database_url: str = os.getenv(
         "DATABASE_URL",
         f"sqlite:///{(BASE_DIR / 'app.db').as_posix()}",
