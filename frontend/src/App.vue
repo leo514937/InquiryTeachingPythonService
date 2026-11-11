@@ -5,6 +5,7 @@
     <p>暂时无法验证登录状态：{{ authRestoreError }}</p>
     <button class="primary-button" type="button" @click="restoreLoginState">重试</button>
   </div>
+  <WorkspaceView v-else-if="showInquiryWorkspace && inquiryWorkspaceAvailable" :admin="Boolean(currentUser?.is_admin)" @close="closeInquiryWorkspace" />
   <div v-else class="workspace-page">
   <div v-if="workspaceLoadError" class="workspace-load-error" role="alert">
     {{ workspaceLoadError }}
@@ -23,12 +24,14 @@
     :theme-mode="themeMode"
     :current-role="currentRole"
     :workspace-roles="currentUser?.workspace_roles || []"
+    :inquiry-workspace-available="inquiryWorkspaceAvailable"
     @toggle-sidebar="toggleLeftSidebar"
     @toggle-theme="toggleTheme"
     @logout="logout"
     @open-graph-admin="openGraphAdmin"
     @open-task-center="showStudyTaskCenter = true"
     @open-user-guide="showUserGuide = true"
+    @open-inquiry-workspace="openInquiryWorkspace"
     @switch-role="handleRoleSwitch"
   />
   <StudyTaskCenter
@@ -657,6 +660,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import AuthPanel from "@/components/AuthPanel.vue";
+import WorkspaceView from "@/workspace/WorkspaceView.vue";
+import { workspaceRequest } from "@/workspace/api";
 import AppHeader from "@/components/AppHeader.vue";
 import ChatComposer from "@/components/ChatComposer.vue";
 import ConversationPanel from "@/components/ConversationPanel.vue";
@@ -781,6 +786,18 @@ const themeMode = ref<"dark" | "light">("light");
 const currentRole = ref<"teacher" | "study_travel" | "parent">(
   (localStorage.getItem("user_role") as "teacher" | "study_travel" | "parent") || "teacher"
 );
+const inquiryWorkspaceAvailable = ref(false);
+const showInquiryWorkspace = ref(false);
+function openInquiryWorkspace() { showInquiryWorkspace.value = true; sessionStorage.setItem('inquiry-workspace-open', '1'); }
+function closeInquiryWorkspace() { showInquiryWorkspace.value = false; sessionStorage.removeItem('inquiry-workspace-open'); }
+watch(currentUser, async (user, _old, onCleanup) => {
+  let active = true;
+  onCleanup(() => { active = false; });
+  inquiryWorkspaceAvailable.value = false;
+  if (!user || !user.workspace_roles.includes('teacher')) { showInquiryWorkspace.value = false; return; }
+  try { await workspaceRequest(); if (active) { inquiryWorkspaceAvailable.value = true; if (sessionStorage.getItem('inquiry-workspace-open') === '1') showInquiryWorkspace.value = true; } }
+  catch { if (active) inquiryWorkspaceAvailable.value = false; }
+}, { immediate: true });
 const homeContext = ref<HomeContext>({ child_age_grade: "", available_time: "", activity_space: "", available_materials: "", adult_accompaniment: "" });
 const saveSuccessVisible = ref(false);
 const workflowPhase = ref<"idle" | "guide" | "draft" | "expert">("idle");
@@ -1611,6 +1628,8 @@ async function logout() {
   try {
     await logoutUser();
   } finally {
+    sessionStorage.removeItem('inquiry-workspace-open');
+    sessionStorage.removeItem('inquiry-workspace-current');
     currentUser.value = null;
     sessions.value = [];
     currentSession.value = null;

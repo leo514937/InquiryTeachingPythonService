@@ -1,0 +1,1 @@
+"""Independent inquiry workspace feature."""

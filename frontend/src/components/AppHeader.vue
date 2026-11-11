@@ -19,6 +19,7 @@
     <div v-else class="header-context header-context-empty">{{ currentRole === 'parent' ? '输入探究主题，开始设计家庭活动' : '创建一个课题，开始协同设计' }}</div>
 
     <div class="header-actions">
+      <button v-if="inquiryWorkspaceAvailable" class="header-admin-button inquiry-workspace-trigger" type="button" :disabled="streaming || saving" @click="$emit('open-inquiry-workspace')">探究教学工作空间</button>
       <div v-if="workspaceRoles.length > 1" class="role-switcher">
         <button v-if="workspaceRoles.includes('teacher')"
           :class="{ active: currentRole === 'teacher' }"
@@ -80,6 +81,7 @@ const props = defineProps<{
   themeMode: 'light' | 'dark';
   currentRole: UserRole;
   workspaceRoles: UserRole[];
+  inquiryWorkspaceAvailable: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -89,6 +91,7 @@ const emit = defineEmits<{
   'open-graph-admin': [];
   'open-task-center': [];
   'open-user-guide': [];
+  'open-inquiry-workspace': [];
   logout: [];
   'switch-role': [role: UserRole];
 }>();
@@ -134,6 +137,12 @@ const expertId = computed({
   white-space: nowrap;
 }
 
+.header-actions .inquiry-workspace-trigger {
+  white-space: nowrap;
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
 .role-switcher button {
   padding: 5px 10px;
   border: 0;
@@ -149,5 +158,11 @@ const expertId = computed({
   background: var(--surface);
   color: var(--text-primary);
   box-shadow: var(--shadow-sm);
+}
+
+@media (max-width: 680px) {
+  .workspace-header { grid-template-columns: auto minmax(0, 1fr); }
+  .header-actions { justify-content: flex-start; overflow-x: auto; }
+  .header-actions > * { flex-shrink: 0; }
 }
 </style>

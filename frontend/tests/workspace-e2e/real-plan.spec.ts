@@ -1,0 +1,21 @@
+import {test,expect} from '@playwright/test';
+test.skip(process.env.INQUIRY_E2E_REAL_MODEL !== '1', 'Requires configured external model');
+test('真实模型规划诊断：小学科学',async({page})=>{
+ test.setTimeout(300000);
+ const api=`http://127.0.0.1:${process.env.INQUIRY_E2E_PORT || '18760'}`;
+ const registered=await page.request.post(`${api}/api/auth/register`,{data:{username:`plan_${Date.now()}`,password:'test-password-123'}});expect(registered.ok()).toBeTruthy();
+ await page.goto('/');await page.getByRole('button',{name:'探究教学工作空间'}).click();
+ const goal='小学三年级科学：植物为什么需要阳光？设计观察、猜想、记录与解释的探究课。';
+ await page.getByLabel('教学需求',{exact:true}).fill(goal);
+ await page.getByRole('button',{name:'生成教学空间'}).click();
+ await expect.poll(async()=>{const response=await page.request.get(`${api}/api/inquiry-workspaces`);const items=(await response.json()).data;return items.some((i:any)=>i.title===goal);},{timeout:30000}).toBe(true);
+ const ws=(await (await page.request.get(`${api}/api/inquiry-workspaces`)).json()).data.find((i:any)=>i.title===goal).id;
+ await expect.poll(async()=>{const body=(await (await page.request.get(`${api}/api/inquiry-workspaces/${ws}`)).json()).data;return body.latest_run?.status || '';},{timeout:240000,intervals:[2000,5000]}).toMatch(/running|completed|waiting_review|failed/);
+ const workspace=(await (await page.request.get(`${api}/api/inquiry-workspaces/${ws}`)).json()).data;
+ const run=workspace.latest_run;
+ if(run.status==='failed') throw new Error(`规划失败：${run.error}`);
+ const graph=(await (await page.request.get(`${api}/api/inquiry-workspaces/${ws}/runs/${run.id}/graph`)).json()).data;
+ console.log('真实 Planner 能力:',graph.nodes.map((node:any)=>node.capability).join(', '));
+ expect(graph.nodes.length).toBeGreaterThan(0);
+ if(run.status==='running') await page.request.post(`${api}/api/inquiry-workspaces/${ws}/runs/${run.id}/cancel`);
+});
